@@ -4,8 +4,8 @@
   "description": "Claude Code mods (plugins of function hooks)",
   "plugins": [
     {
-      "name": "coulisses",
-      "source": "./coulisses",
+      "name": "backstage",
+      "source": "./backstage",
       "description": "Band above the prompt: Haiku rewrites or writes your prompt, Verify a claim with a read-only scout, Handoff to a fresh session"
     }
   ]

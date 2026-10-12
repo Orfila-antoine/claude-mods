@@ -2,7 +2,7 @@ import { expect, test } from 'claude-code/testing'
 
 import { mountBand, press, stage, turn } from './harness'
 
-const SUMMARY = '# Session Handoff — coulisses\n\n## Where it started\nResume phase 2.'
+const SUMMARY = '# Session Handoff — backstage\n\n## Where it started\nResume phase 2.'
 
 test('Handoff stays hidden under 50 % of context', async ($, on) => {
   stage(on, { percent: 40 })

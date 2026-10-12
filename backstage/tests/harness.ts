@@ -77,11 +77,11 @@ export const typed = (text: string) => ({ text, origin: { kind: 'composer' as co
 
 export function mountBand($: Engine, isWorking = false) {
   return $.ui.mount({
-    plugin: 'coulisses',
+    plugin: 'backstage',
     surface: 'terminal',
     component: 'AbovePrompt',
     props: { hasSurvey: false, isWorking, maxRows: 10, bodyColumns: 100, scroll: { offset: 0, bodyRows: 9 }, view: {} },
   })
 }
 
-export const press = ($: Engine, key: string) => $.ui.press({ plugin: 'coulisses', key })
+export const press = ($: Engine, key: string) => $.ui.press({ plugin: 'backstage', key })

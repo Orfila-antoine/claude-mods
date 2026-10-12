@@ -2,16 +2,16 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { Claim } from '../types'
-import { CHALLENGE, IDEAS, PROMPT_TYPES, REFINER, REWRITE_DIRECTION, SCOUT, SCOUT_TASK, WRITER, fill } from './textes'
+import { CHALLENGE, IDEAS, PROMPT_TYPES, REFINER, REWRITE_DIRECTION, SCOUT, SCOUT_TASK, WRITER, fill } from './prompts'
 
-const busy = atom({ plugin: 'coulisses', key: 'busy' } as const, null)
-const picker = atom({ plugin: 'coulisses', key: 'picker' } as const, null)
-const undo = atom({ plugin: 'coulisses', key: 'undo' } as const, null)
-const scoutId = atom({ plugin: 'coulisses', key: 'scoutId' } as const, null)
-const contextPercent = atom({ plugin: 'coulisses', key: 'contextPercent' } as const, 0)
-const isHandingOff = atom({ plugin: 'coulisses', key: 'isHandingOff' } as const, false)
+const busy = atom({ plugin: 'backstage', key: 'busy' } as const, null)
+const picker = atom({ plugin: 'backstage', key: 'picker' } as const, null)
+const undo = atom({ plugin: 'backstage', key: 'undo' } as const, null)
+const scoutId = atom({ plugin: 'backstage', key: 'scoutId' } as const, null)
+const contextPercent = atom({ plugin: 'backstage', key: 'contextPercent' } as const, 0)
+const isHandingOff = atom({ plugin: 'backstage', key: 'isHandingOff' } as const, false)
 
-const SCOUT_AGENT = 'coulisses:scout'
+const SCOUT_AGENT = 'backstage:scout'
 const HANDOFF_FROM_PERCENT = 50
 const HANDOFF_HEADING = '# Session Handoff'
 const SENT_ROWS = 6
@@ -165,13 +165,13 @@ export const register: Register = on => {
       $.command.register({ name: 'refute', description: 'Have a scout verify the selected sentence (or the text given)' }),
       $.agent.register({
         name: 'scout',
-        description: 'Verifies one claim, read-only, for the coulisses mod',
+        description: 'Verifies one claim, read-only, for the backstage mod',
         prompt: SCOUT,
         tools: ['Read', 'Grep', 'Glob'],
         model: 'haiku',
       }),
     ])
-    for (const result of registered) if (result.status === 'rejected') $.ui.log(`coulisses: ${String(result.reason)}`)
+    for (const result of registered) if (result.status === 'rejected') $.ui.log(`backstage: ${String(result.reason)}`)
     return next(e)
   })
 

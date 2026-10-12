@@ -2,7 +2,7 @@
 
 Claude Code mods (plugins of function hooks).
 
-## coulisses
+## backstage
 
 A band above the prompt:
 
@@ -23,12 +23,12 @@ Requirements: the Handoff button needs a `session-handoff` skill or command in y
 
 ```
 /plugin marketplace add Orfila-antoine/claude-mods
-/plugin install coulisses@claude-mods
+/plugin install backstage@claude-mods
 ```
 
 ### Develop
 
 ```
-claude plugin validate coulisses
-claude plugin test coulisses
+claude plugin validate backstage
+claude plugin test backstage
 ```

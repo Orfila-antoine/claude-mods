@@ -4,7 +4,7 @@ export type Picker = 'type' | 'idea'
 
 declare module 'claude-code' {
   interface PluginState {
-    coulisses: {
+    backstage: {
       busy: string | null
       picker: Picker | null
       undo: { draft: string; written: string } | null
