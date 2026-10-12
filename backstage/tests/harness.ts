@@ -92,12 +92,12 @@ export const turn = (answer: string, turnId: string, reason: 'answer' | 'aborted
 
 export const typed = (text: string) => ({ text, origin: { kind: 'composer' as const }, wait: false })
 
-export function mountBand($: Engine, isWorking = false) {
+export function mountBand($: Engine, isWorking = false, maxRows = 10) {
   return $.ui.mount({
     plugin: 'backstage',
     surface: 'terminal',
     component: 'AbovePrompt',
-    props: { hasSurvey: false, isWorking, maxRows: 10, bodyColumns: 100, scroll: { offset: 0, bodyRows: 9 }, view: {} },
+    props: { hasSurvey: false, isWorking, maxRows, bodyColumns: 100, scroll: { offset: 0, bodyRows: maxRows - 1 }, view: {} },
   })
 }
 

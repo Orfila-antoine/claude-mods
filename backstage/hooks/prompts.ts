@@ -54,7 +54,11 @@ export const PROMPT_TYPES = {
 const RULES = `- The prompt is about this conversation and this draft: name the actual files, features, values and decisions they mention. Never write a generic prompt.
 - Use only what the draft and the conversation say; never invent a file, a value or a fact.
 - The prompt must be ready to send as is: no placeholder, no bracket, no blank, no "to confirm". When a needed piece is unknown, either leave it out or tell the agent to find it (e.g. "find the component that renders this button").
-- Plain, short sentences or a short numbered list; no preamble.`
+- Plain, short sentences or a short numbered list; no preamble.
+- In the draft, "you" is the assistant and "I/my" is the developer: keep who did what straight.
+- Stay proportionate: a question stays a question (at most "if so, do it"), a casual remark stays light, never a multi-step plan the developer did not ask for.
+- Add no ask of your own: not the assistant's pending proposals, not a "keep X" constraint, not an error message, not a fix the draft does not name.
+- Quote the exact UI text, file or value the draft points at when the conversation holds it.`
 
 const AGENT = 'a prompt that a developer sends to Claude Code, an agentic coding assistant working in their repository'
 
@@ -78,17 +82,12 @@ export const NEXT_MOVES = `The assistant's last answer was:
 <<<
 {answer}
 >>>
-Write the 3 messages the developer is most likely to send next, one per role, in this order:
-1. The next step: the action this answer proposes next (often its last line), phrased as the developer's own request.
-2. The open point: the developer's answer or decision to the question this answer left open; if none, the most useful follow-up.
-3. The check: a request to verify or challenge the riskiest claim or change in this answer.
-Rules:
-- Write exactly like the developer writes in this conversation: same language, same tone, same brevity, lowercase start, no final period, no formal inversion, no politeness padding.
-- Each message is specific to this conversation and ready to send as is: real names, no placeholder, at most 15 words.
-- Each message asks the assistant to do or decide something. When the next step is the developer's own action (wait, look, test), write the request or report that follows it, never "I'm waiting".
-- Never invent an observation, a number or a result the conversation does not contain.
-- Never challenge or request what this answer already settled, ruled out or did. No two messages on the same point.
-Reply with exactly 3 lines, no blank line, no numbering, no quotes, nothing else.`
+Write the developer's 3 most likely next messages, one per line:
+1. the next step this answer proposes
+2. the answer to its open question, or the best follow-up
+3. a check of its riskiest claim or change
+Each is the shortest effective prompt for Claude Code: imperative, names its target, at most 12 words, in the developer's language.
+No invented facts, nothing already settled, no "I'm waiting", no numbering, quotes or blank lines.`
 
 export const REWRITE_DIRECTION =
   'make it clear and precise: an explicit target, an explicit expected result, every reference resolved from the conversation'

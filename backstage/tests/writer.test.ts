@@ -2,18 +2,18 @@ import { expect, test } from 'claude-code/testing'
 
 import { HAIKU, mountBand, press, stage, typed } from './harness'
 
-test('without a draft, Haiku writes a prompt of the chosen type', async ($, on) => {
+test('without a draft, the model writes a prompt of the chosen type', async ($, on) => {
   const { asked, filled } = stage(on)
   await mountBand($)
   await press($, 'pick')
   await press($, 'type-bug')
-  expect(asked[0]?.model).toBe('haiku')
+  expect(asked[0]?.model).toBe('opus')
   expect(asked[0]?.system).toContain('A good Bug fix prompt')
   expect(asked[0]?.prompt).toContain('There is no draft')
   expect(filled).toEqual([HAIKU])
 })
 
-test('Haiku is given the recent conversation', async ($, on) => {
+test('the model is given the recent conversation', async ($, on) => {
   const { asked } = stage(on, {
     draft: 'fix it',
     messages: [
@@ -28,7 +28,7 @@ test('Haiku is given the recent conversation', async ($, on) => {
   expect(asked[0]?.system).toContain('no placeholder')
 })
 
-test('✨✏️ rewrites the draft and Undo Haiku restores it', async ($, on) => {
+test('✨✏️ rewrites the draft and Undo restores it', async ($, on) => {
   const { asked, box } = stage(on, { draft: 'login broken' })
   const band = await mountBand($)
   await press($, 'rewrite')
@@ -53,7 +53,7 @@ test('chained rewrites keep the original draft for Undo', async ($, on) => {
   expect(box.text).toBe('login broken')
 })
 
-test('Undo Haiku goes away once the prompt is sent or edited', async ($, on) => {
+test('Undo goes away once the prompt is sent or edited', async ($, on) => {
   const { type } = stage(on, { draft: 'login broken' })
   const band = await mountBand($)
 
@@ -67,7 +67,7 @@ test('Undo Haiku goes away once the prompt is sent or edited', async ($, on) => 
   expect(await band.findAll({ key: 'undo' })).toEqual([])
 })
 
-test('refining an empty draft does not call Haiku', async ($, on) => {
+test('refining an empty draft does not call the model', async ($, on) => {
   const { asked, toasts } = stage(on)
   await mountBand($)
   await press($, 'rewrite')
