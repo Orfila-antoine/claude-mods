@@ -47,7 +47,7 @@ test('no suggestions after an aborted turn, and a typed prompt clears them', asy
   expect(await band.findAll({ key: 'next-1' })).toEqual([])
 })
 
-test('braille rain stands in for the choices, then each row decodes into its prompt', async ($, on) => {
+test('alphanumeric rain stands in for the choices, then each row decodes into its prompt', async ($, on) => {
   const { clock } = stage(on, { reply: THREE, replyDelayMs: 1000 })
   const band = await mountBand($)
   await $.turn.complete(turn('Done.', 't1'))
@@ -55,8 +55,8 @@ test('braille rain stands in for the choices, then each row decodes into its pro
   const rain = async () => (await band.findAll({ type: 'Text' })).map(found => found.text).join('|')
   const first = await rain()
   expect(first).toMatch(/\[ 1 \] /)
-  expect(first).toMatch(/[⣿⣾⣽⣻⢿⡿⣟⣯⣷⣶⣦⣤⣄⡆⠇⠧⠷⠿]/)
-  expect(first).not.toMatch(/[ｱ-ﾝ]/)
+  expect(first).toMatch(/\[ 1 \] [A-Za-z0-9]{5}/)
+  expect(first).not.toMatch(/[⠀-⣿]/)
   await clock.advance(300)
   expect(await rain()).not.toBe(first)
   expect(await band.findAll({ key: 'next-1' })).toEqual([])

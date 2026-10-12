@@ -21,15 +21,11 @@ const SENT_ROWS = 6
 const SENT_ROW_CHARS = 1500
 const SUGGEST_ROWS = 10
 const VERDICT = /^(CONFIRMED|REFUTED|INCONCLUSIVE)\b/
-const BRAILLE = '⣿⣾⣽⣻⢿⡿⣟⣯⣷⣶⣦⣤⣄⡆⠇⠧⠷⠿'
-const ALNUM = 'abcdefghijklmnopqrstuvwxyz0123456789'
+const ALNUM = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
 const TRAIL = 7
 const REVEAL_FRAMES = 10
 
-const glyph = () => {
-  const set = Math.random() < 0.3 ? ALNUM : BRAILLE
-  return set[Math.floor(Math.random() * set.length)] ?? ' '
-}
+const glyph = () => ALNUM[Math.floor(Math.random() * ALNUM.length)] ?? ' '
 
 function rainRow(width: number, row: number, frame: number) {
   const glyphs = Array.from({ length: width }, glyph)

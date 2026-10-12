@@ -1,6 +1,6 @@
 {
   "name": "backstage",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Band above the prompt: Haiku rewrites or writes your prompt, Verify a claim with a read-only scout, Handoff to a fresh session",
   "author": { "name": "Antoine Orfila" },
   "license": "MIT",
