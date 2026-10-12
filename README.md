@@ -1,24 +1,19 @@
 # claude-mods
 
-Claude Code mods (plugins of function hooks).
+Mods for [Claude Code](https://claude.com/claude-code): plugins that change Claude Code's own interface through its function-hook API.
 
 ## backstage
 
-A band above the prompt:
+**A band of buttons above your Claude Code prompt: turn a rough draft into a sharp prompt in one key, make a read-only scout check Claude's weakest claim, and send one of three next prompts in one click.**
 
-| Button | Key | What it does |
-|---|---|---|
-| ✨✏️ | `r` | Opus (low effort) rewrites your draft so it is clear and precise, from the recent conversation |
-| Refine… | `i` | Same, with a direction: Clarify, Simplify, Distill, Focus, Harden, Expand, Overdrive |
-| Write prompt… | `w` | Opus (low effort) writes (empty box) or rewrites your draft as a prompt type: Question, UI change, Bug fix, Feature / ticket, Code review, Investigation, Tooling / config |
-| Verify | `v` | A read-only Haiku scout checks the sentence you selected, or else the weakest claim found in the last answer; the verdict shows as a toast |
-| Undo | `u` | Restores your draft; gone once you edit or send the prompt |
-| Handoff → /new | `p` | From 50 % of context: runs `/session-handoff`, then `/new`, and puts the summary in the new prompt |
-| 3 next prompts | `1` `2` `3` | After each answer, Opus at low effort (last 10 messages and the full answer, written as effective prompts) proposes the next step, the answer to the open point and a check; one click sends it as is |
-
-Press a button with the mouse, or focus the band with `ctrl+x tab` and press its key. `/refute <text>` verifies a given sentence.
-
-Requirements: the Handoff button needs a `session-handoff` skill or command in your setup.
+```
+ [✨✏️] [Refine…] [Write prompt…] [Verify] [Undo] [Handoff → /new]
+ ──────────────────────────────────────────────────────────────────
+ [1] Run the auth spec alone and paste the first failing line
+ [2] Should expired tokens return 401 or redirect to /login?
+ [3] Check that refreshToken is still called on the mobile client
+ > _
+```
 
 ### Install
 
@@ -27,9 +22,64 @@ Requirements: the Handoff button needs a `session-handoff` skill or command in y
 /plugin install backstage@claude-mods
 ```
 
-### Develop
+Built and tested on Claude Code 2.1.296.
+
+### What it does
+
+**A sharp prompt in one key.** `✨✏️` rewrites your draft so it is clear and precise, using the recent conversation. `Refine…` does the same in a direction you pick: Clarify, Simplify, Distill, Focus, Harden, Expand, Overdrive. `Write prompt…` writes a prompt from scratch (empty box) or rewrites your draft as a type: Question, UI change, Bug fix, Feature / ticket, Code review, Investigation, Tooling / config. The result replaces your draft; `Undo` brings the draft back until you edit or send.
+
+**Catch Claude bluffing.** `Verify` sends a read-only scout (Haiku, Read/Grep/Glob only, no edits) to check the sentence you selected. With nothing selected, it first finds the weakest claim in Claude's last answer, then checks that. The verdict, `CONFIRMED`, `REFUTED` or `INCONCLUSIVE` with its evidence, shows as a toast. `/refute <text>` checks a sentence you type.
+
+**Three next prompts, not one.** Claude Code's built-in suggestion offers one guess as ghost text. backstage offers three distinct moves after every answer: the next step, the open point, and a check, each in 12 words or fewer. They rain in as random letters, then decode left to right. Press `1`, `2` or `3` (or click) to send one as is. Nothing is ever sent without your click.
+
+**Hand off before the context fills up.** From 50 % of context, `Handoff → /new` appears, coloured like a context gauge (green, yellow above 50 %, red above 80 %). It runs `/session-handoff`, opens `/new`, and puts the summary in the new prompt.
+
+### Keys
+
+Click a button, or focus the band with `ctrl+x tab` and press its key:
+
+| Key | Button |
+|---|---|
+| `r` | ✨✏️ rewrite |
+| `i` | Refine… |
+| `w` | Write prompt… |
+| `v` | Verify |
+| `u` | Undo |
+| `p` | Handoff → /new |
+| `1` `2` `3` | Send a suggested prompt |
+
+### What it costs
+
+backstage calls models on your account:
+
+| When | Call |
+|---|---|
+| After every answer, and when a session resumes | 1 Opus call at low effort for the three next prompts (last 10 messages, each cut to 1,500 characters, plus the last 6,000 characters of the answer) |
+| `✨✏️`, `Refine…`, `Write prompt…` | 1 Opus call at low effort per click |
+| `Verify` | 1 Haiku scout; with nothing selected, also 1 call to your session's model to pick the weakest claim |
+
+To stop it: `/plugin disable backstage@claude-mods`.
+
+### Handoff requirement
+
+`Handoff → /new` needs a `session-handoff` skill or command in your setup whose answer starts with `# Session Handoff`. Any other answer stops the handoff with a toast, and nothing is lost.
+
+### How it's built
+
+One hooks module, [`backstage/hooks/register.tsx`](backstage/hooks/register.tsx), readable as an example of the mod API:
+
+- `ui.render` on `AbovePrompt` draws the band and fits it to the rows left;
+- `turn.complete` triggers the suggestions and catches the scout's verdict;
+- `agent.register` declares the read-only scout, and `agent.offer` hides it from the main model;
+- `command.register` adds `/refute`.
+
+Every model instruction lives in [`backstage/hooks/prompts.ts`](backstage/hooks/prompts.ts).
 
 ```
 claude plugin validate backstage
 claude plugin test backstage
 ```
+
+## License
+
+MIT

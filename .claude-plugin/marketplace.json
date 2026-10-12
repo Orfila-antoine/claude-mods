@@ -1,12 +1,12 @@
 {
   "name": "claude-mods",
   "owner": { "name": "Antoine Orfila" },
-  "description": "Claude Code mods (plugins of function hooks)",
+  "description": "Mods that change Claude Code's own interface",
   "plugins": [
     {
       "name": "backstage",
       "source": "./backstage",
-      "description": "Band above the prompt: Haiku rewrites or writes your prompt, Verify a claim with a read-only scout, Handoff to a fresh session"
+      "description": "Buttons above the prompt: rewrite your prompt in one key, verify Claude's weakest claim with a read-only scout, send one of three next prompts in one click, hand off to a fresh session"
     }
   ]
 }
