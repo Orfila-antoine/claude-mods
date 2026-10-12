@@ -2,6 +2,7 @@ import { expect, test } from 'claude-code/testing'
 
 import { mountBand, press, stage, turn, typed } from './harness'
 
+const SETTLE = 1200
 const THREE = '1. Go, ship it\n- Also run the tests first\n"What about the logout?"\nA fourth one'
 
 test('after an answer, Opus proposes 3 next prompts from the conversation; one click sends one', async ($, on) => {
@@ -10,7 +11,7 @@ test('after an answer, Opus proposes 3 next prompts from the conversation; one c
     messages: Array.from({ length: 12 }, (_, i) => ({ role: i % 2 ? ('assistant' as const) : ('user' as const), text: `row ${i}` })),
   })
   await $.turn.complete(turn('Done: login fixed. Next step: run the tests.', 't1'))
-  await clock.advance(10)
+  await clock.advance(SETTLE)
   expect(forks).toEqual([])
   expect(asked[0]?.model).toBe('opus')
   expect(asked[0]?.prompt).toContain('Done: login fixed. Next step: run the tests.')
@@ -40,28 +41,35 @@ test('no suggestions after an aborted turn, and a typed prompt clears them', asy
   expect(await band.findAll({ key: 'next-1' })).toEqual([])
 
   await $.turn.complete(turn('Done.', 't2'))
-  await clock.advance(10)
+  await clock.advance(SETTLE)
   expect(await band.findAll({ key: 'next-1' })).not.toEqual([])
   await $.prompt.submit(typed('something else'))
   expect(await band.findAll({ key: 'next-1' })).toEqual([])
 })
 
-test('a loading effect stands in for the choices while they are written', async ($, on) => {
+test('braille rain stands in for the choices, then each row decodes into its prompt', async ($, on) => {
   const { clock } = stage(on, { reply: THREE, replyDelayMs: 1000 })
   const band = await mountBand($)
   await $.turn.complete(turn('Done.', 't1'))
   await clock.advance(10)
-  expect(await band.findAll({ text: /⠋ Decoding 3 next prompts/ })).not.toEqual([])
-  const firstRain = (await band.findAll({ type: 'Text', text: /[ｱ-ﾝ0-9]{10}/ })).map(found => found.text).join('|')
+  const rain = async () => (await band.findAll({ type: 'Text' })).map(found => found.text).join('|')
+  const first = await rain()
+  expect(first).toMatch(/\[ 1 \] /)
+  expect(first).toMatch(/[⣿⣾⣽⣻⢿⡿⣟⣯⣷⣶⣦⣤⣄⡆⠇⠧⠷⠿]/)
+  expect(first).not.toMatch(/[ｱ-ﾝ]/)
   await clock.advance(300)
-  expect(await band.findAll({ text: /⠸ Decoding 3 next prompts/ })).not.toEqual([])
-  const laterRain = (await band.findAll({ type: 'Text', text: /[ｱ-ﾝ0-9]{10}/ })).map(found => found.text).join('|')
-  expect(firstRain).not.toBe('')
-  expect(laterRain).not.toBe(firstRain)
+  expect(await rain()).not.toBe(first)
+  expect(await band.findAll({ key: 'next-1' })).toEqual([])
 
   await clock.advance(1000)
-  expect(await band.findAll({ text: /Decoding 3 next prompts/ })).toEqual([])
+  await clock.advance(500)
+  const midway = await rain()
+  expect(midway).toMatch(/\[ 1 \] Go,/)
+  expect(await band.findAll({ key: 'next-1' })).toEqual([])
+
+  await clock.advance(SETTLE)
   expect(await band.findAll({ key: 'next-1' })).not.toEqual([])
+  expect(await band.findAll({ type: 'Text', text: ' Go, ship it' })).not.toEqual([])
 })
 
 test('a loading state left by a reload is cleared when the mod starts again', async ($, on) => {
@@ -72,10 +80,10 @@ test('a loading state left by a reload is cleared when the mod starts again', as
   const band = await mountBand($)
   await $.turn.complete(turn('Done.', 't1'))
   await clock.advance(10)
-  expect(await band.findAll({ text: /Decoding/ })).not.toEqual([])
+  expect(await band.findAll({ type: 'Text', text: /^\[ 1 \] / })).not.toEqual([])
 
   await $.session.start({ cwd: '.', surface: 'terminal', isInteractive: true })
-  expect(await band.findAll({ text: /Decoding/ })).toEqual([])
+  expect(await band.findAll({ type: 'Text', text: /^\[ 1 \] / })).toEqual([])
 })
 
 test('after a reload, the 3 prompts are written again for the last answer', async ($, on) => {
@@ -92,7 +100,7 @@ test('after a reload, the 3 prompts are written again for the last answer', asyn
   const band = await mountBand($)
 
   await $.session.start({ cwd: '.', surface: 'terminal', isInteractive: true })
-  await clock.advance(10)
+  await clock.advance(SETTLE)
   expect(asked[0]?.prompt).toContain('Done: login fixed.')
   expect(await band.findAll({ key: 'next-1' })).not.toEqual([])
 })
@@ -102,7 +110,7 @@ const LONG = `${'word '.repeat(40).trim()}\nsecond choice\nthird choice`
 test('the band keeps its buttons when the prompt leaves little room', async ($, on) => {
   const { clock } = stage(on, { reply: LONG })
   await $.turn.complete(turn('Done.', 't1'))
-  await clock.advance(10)
+  await clock.advance(SETTLE)
 
   const roomy = await mountBand($, false, 10)
   expect(await roomy.findAll({ key: 'next-3' })).not.toEqual([])

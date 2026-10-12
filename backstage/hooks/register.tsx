@@ -12,6 +12,7 @@ const contextPercent = atom({ plugin: 'backstage', key: 'contextPercent' } as co
 const isHandingOff = atom({ plugin: 'backstage', key: 'isHandingOff' } as const, false)
 const suggestions = atom({ plugin: 'backstage', key: 'suggestions' } as const, [])
 const suggestFrame = atom({ plugin: 'backstage', key: 'suggestFrame' } as const, null)
+const revealFrom = atom({ plugin: 'backstage', key: 'revealFrom' } as const, null)
 
 const SCOUT_AGENT = 'backstage:scout'
 const HANDOFF_FROM_PERCENT = 50
@@ -20,14 +21,19 @@ const SENT_ROWS = 6
 const SENT_ROW_CHARS = 1500
 const SUGGEST_ROWS = 10
 const VERDICT = /^(CONFIRMED|REFUTED|INCONCLUSIVE)\b/
-const SPINNER = '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
-const GLYPHS = 'ｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜﾝ0123456789'
-const RAIN_WIDTHS = [0.55, 0.4, 0.48]
-const TRAIL = 8
+const BRAILLE = '⣿⣾⣽⣻⢿⡿⣟⣯⣷⣶⣦⣤⣄⡆⠇⠧⠷⠿'
+const ALNUM = 'abcdefghijklmnopqrstuvwxyz0123456789'
+const TRAIL = 7
+const REVEAL_FRAMES = 10
+
+const glyph = () => {
+  const set = Math.random() < 0.3 ? ALNUM : BRAILLE
+  return set[Math.floor(Math.random() * set.length)] ?? ' '
+}
 
 function rainRow(width: number, row: number, frame: number) {
-  const glyphs = Array.from({ length: width }, (_, i) => GLYPHS[(i * 31 + row * 17 + (i % 3 === row % 3 ? frame : 0) * 7) % GLYPHS.length])
-  const head = ((frame + row * 7) % (width + TRAIL)) - 1
+  const glyphs = Array.from({ length: width }, glyph)
+  const head = ((frame + row * 9) % (width + TRAIL)) - 1
   const trailStart = Math.max(0, head - TRAIL)
   const headAt = Math.min(head, width - 1)
   const isHeadShown = head >= 0 && head < width
@@ -37,6 +43,12 @@ function rainRow(width: number, row: number, frame: number) {
     head: isHeadShown ? (glyphs[head] ?? '') : '',
     after: glyphs.slice(Math.max(trailStart, isHeadShown ? head + 1 : headAt + 1)).join(''),
   }
+}
+
+function decodeRow(text: string, width: number, row: number, step: number) {
+  const visible = text.slice(0, width)
+  const resolved = Math.max(0, Math.floor((step / REVEAL_FRAMES) * visible.length * 1.3) - row * 3)
+  return { done: visible.slice(0, resolved), noise: Array.from({ length: Math.max(0, visible.length - resolved) }, glyph).join('') }
 }
 
 let sentCount = 0
@@ -111,19 +123,27 @@ async function nextMoves($: EngineInterface, answer: string) {
 
 async function suggestNext($: EngineInterface, answer: string) {
   const round = sentCount
-  await update($, suggestFrame, () => 0)
+  await Promise.all([update($, suggestFrame, () => 0), update($, revealFrom, () => null)])
   const ticker = $.clock.every(100, () => void update($, suggestFrame, frame => (frame === null ? null : frame + 1)))
-  const reply = await nextMoves($, answer).finally(() => {
+  const stop = () => {
     ticker.cancel()
     void update($, suggestFrame, () => null)
+    void update($, revealFrom, () => null)
+  }
+  const reply = await nextMoves($, answer).catch(error => {
+    stop()
+    throw error
   })
-  if (!reply.isAnswered || round !== sentCount) return
+  if (!reply.isAnswered || round !== sentCount) return stop()
   const next = reply.text
     .split('\n')
     .map(line => line.replace(/^\s*(?:\d+[.)]|[-*•])\s*/, '').replace(/^["“]|["”]$/g, '').trim())
     .filter(Boolean)
     .slice(0, 3)
-  await update($, suggestions, () => next)
+  if (next.length === 0) return stop()
+  const at = (await read($, suggestFrame)) ?? 0
+  await Promise.all([update($, suggestions, () => next), update($, revealFrom, () => at)])
+  $.clock.after(REVEAL_FRAMES * 100, stop)
 }
 
 async function resumeSuggestions($: EngineInterface) {
@@ -231,6 +251,7 @@ export const register: Register = on => {
       update($, picker, () => null),
       update($, isHandingOff, () => false),
       update($, suggestFrame, () => null),
+      update($, revealFrom, () => null),
     ])
     $.clock.after(0, () => void resumeSuggestions($).catch(() => undefined))
     const registered = await Promise.allSettled([
@@ -310,7 +331,7 @@ export const register: Register = on => {
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (e.props.hasSurvey) return next(e)
 
-    const [working, open, scouting, undoState, percent, nextPrompts, frame] = await Promise.all([
+    const [working, open, scouting, undoState, percent, nextPrompts, frame, revealAt] = await Promise.all([
       read($, busy),
       read($, picker),
       read($, scoutId),
@@ -318,6 +339,7 @@ export const register: Register = on => {
       read($, contextPercent),
       read($, suggestions),
       read($, suggestFrame),
+      read($, revealFrom),
     ])
     const { Box, Button, Text } = $.ui.resolve(e)
 
@@ -347,7 +369,7 @@ export const register: Register = on => {
     const fullRows = nextPrompts.reduce((rows, text) => rows + Math.ceil((text.length + 1) / textWidth), 0)
     const isCompact = room < 1 + fullRows
     const wantsBelow = !working && !menu && !e.props.isWorking && (frame !== null || nextPrompts.length > 0)
-    const showsBelow = wantsBelow && room >= 1 + (frame !== null ? 1 + RAIN_WIDTHS.length : nextPrompts.length)
+    const showsBelow = wantsBelow && room >= 1 + (frame !== null ? 3 : nextPrompts.length)
 
     return (
       <Box flexDirection="column" width={e.props.bodyColumns}>
@@ -369,26 +391,40 @@ export const register: Register = on => {
             <Button key="verify" hotkey="v" label={scouting ? 'Verifying…' : 'Verify'} onPress={() => verify($)} />
             {undoState && <Button key="undo" hotkey="u" label="Undo" onPress={() => undoWrite($)} />}
             {percent >= HANDOFF_FROM_PERCENT && !e.props.isWorking && (
-              <Button key="handoff" hotkey="p" label="Handoff → /new" onPress={() => handOff($)} />
+              <Button key="handoff" hotkey="p" onPress={() => handOff($)}>
+                <Text color={percent > 80 ? 'red' : percent > 50 ? 'yellow' : 'green'}>Handoff → /new</Text>
+              </Button>
             )}
           </Box>
         )}
         {showsBelow && (
           <Text dimColor>{'─'.repeat(Math.max(0, e.props.bodyColumns - 1))}</Text>
         )}
-        {showsBelow && frame !== null && (
+        {showsBelow && frame !== null && revealAt === null && (
           <Box key="suggesting" flexDirection="column">
-            <Text color="success" dimColor>
-              {SPINNER[frame % SPINNER.length]} Decoding 3 next prompts…
-            </Text>
-            {RAIN_WIDTHS.map((ratio, row) => {
-              const rain = rainRow(Math.max(TRAIL + 4, Math.floor((e.props.bodyColumns - 2) * ratio)), row, frame)
+            {[0, 1, 2].map(row => {
+              const rain = rainRow(textWidth, row, frame)
               return (
                 <Text key={`rain-${row}`}>
-                  <Text color="success" dimColor>{rain.before}</Text>
-                  <Text color="success">{rain.trail}</Text>
+                  <Text dimColor>[ {row + 1} ] </Text>
+                  <Text dimColor>{rain.before}</Text>
+                  <Text>{rain.trail}</Text>
                   <Text bold>{rain.head}</Text>
-                  <Text color="success" dimColor>{rain.after}</Text>
+                  <Text dimColor>{rain.after}</Text>
+                </Text>
+              )
+            })}
+          </Box>
+        )}
+        {showsBelow && frame !== null && revealAt !== null && (
+          <Box key="revealing" flexDirection="column">
+            {nextPrompts.map((text, row) => {
+              const decoded = decodeRow(text, textWidth, row, frame - revealAt)
+              return (
+                <Text key={`reveal-${row}`}>
+                  <Text dimColor>[ {row + 1} ] </Text>
+                  <Text>{decoded.done}</Text>
+                  <Text dimColor>{decoded.noise}</Text>
                 </Text>
               )
             })}

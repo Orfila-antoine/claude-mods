@@ -13,6 +13,7 @@ declare module 'claude-code' {
       isHandingOff: boolean
       suggestions: string[]
       suggestFrame: number | null
+      revealFrom: number | null
     }
   }
 }

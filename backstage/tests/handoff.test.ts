@@ -10,6 +10,19 @@ test('Handoff stays hidden under 50 % of context', async ($, on) => {
   expect(await (await mountBand($)).findAll({ key: 'handoff' })).toEqual([])
 })
 
+for (const [percent, color] of [
+  [50, 'green'],
+  [60, 'yellow'],
+  [90, 'red'],
+] as const) {
+  test(`Handoff is ${color} at ${percent} % like the status line gauge`, async ($, on) => {
+    stage(on, { percent })
+    await $.turn.complete(turn('ok', 't0'))
+    const band = await mountBand($)
+    expect(await band.findAll({ type: 'Text', text: 'Handoff → /new' })).toMatchObject([{ props: { color } }])
+  })
+}
+
 test('Handoff stays hidden while a turn runs', async ($, on) => {
   stage(on, { percent: 60 })
   await $.turn.complete(turn('ok', 't0'))
