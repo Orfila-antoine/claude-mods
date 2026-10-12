@@ -1,0 +1,9 @@
+{
+  "name": "coulisses",
+  "version": "0.1.0",
+  "description": "Band above the prompt: Haiku rewrites or writes your prompt, Verify a claim with a read-only scout, Handoff to a fresh session",
+  "author": { "name": "Antoine Orfila" },
+  "license": "MIT",
+  "repository": "https://github.com/Orfila-antoine/claude-mods",
+  "types": "./types/index.d.ts"
+}
