@@ -11,6 +11,8 @@ declare module 'claude-code' {
       scoutId: string | null
       contextPercent: number
       isHandingOff: boolean
+      suggestions: string[]
+      suggestFrame: number | null
     }
   }
 }

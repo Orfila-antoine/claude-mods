@@ -74,6 +74,22 @@ ${RULES}
 - Write in the language of the draft.
 Reply with the rewritten prompt only.`
 
+export const NEXT_MOVES = `The assistant's last answer was:
+<<<
+{answer}
+>>>
+Write the 3 messages the developer is most likely to send next, one per role, in this order:
+1. The next step: the action this answer proposes next (often its last line), phrased as the developer's own request.
+2. The open point: the developer's answer or decision to the question this answer left open; if none, the most useful follow-up.
+3. The check: a request to verify or challenge the riskiest claim or change in this answer.
+Rules:
+- Write exactly like the developer writes in this conversation: same language, same tone, same brevity, lowercase start, no final period, no formal inversion, no politeness padding.
+- Each message is specific to this conversation and ready to send as is: real names, no placeholder, at most 15 words.
+- Each message asks the assistant to do or decide something. When the next step is the developer's own action (wait, look, test), write the request or report that follows it, never "I'm waiting".
+- Never invent an observation, a number or a result the conversation does not contain.
+- Never challenge or request what this answer already settled, ruled out or did. No two messages on the same point.
+Reply with exactly 3 lines, no blank line, no numbering, no quotes, nothing else.`
+
 export const REWRITE_DIRECTION =
   'make it clear and precise: an explicit target, an explicit expected result, every reference resolved from the conversation'
 

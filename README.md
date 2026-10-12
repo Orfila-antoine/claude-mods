@@ -14,6 +14,7 @@ A band above the prompt:
 | Verify | `v` | A read-only Haiku scout checks the sentence you selected, or else the weakest claim found in the last answer; the verdict shows as a toast |
 | Undo Haiku | `u` | Restores your draft; gone once you edit or send the prompt |
 | Handoff → /new | `p` | From 50 % of context: runs `/session-handoff`, then `/new`, and puts the summary in the new prompt |
+| 3 next prompts | `1` `2` `3` | After each answer, Opus at low effort (last 10 messages and the full answer, in your own style) proposes the next step, the answer to the open point and a check; one click sends it as is |
 
 Press a button with the mouse, or focus the band with `ctrl+x tab` and press its key. `/refute <text>` verifies a given sentence.
 

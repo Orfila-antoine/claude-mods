@@ -12,19 +12,32 @@ type Options = {
   draft?: string
   selection?: string
   messages?: { role: 'user' | 'assistant'; text: string }[]
+  reply?: string
+  replyDelayMs?: number
 }
 
-export function stage(on: On, { percent = 10, draft = '', selection, messages = [] }: Options = {}) {
+export function stage(
+  on: On,
+  { percent = 10, draft = '', selection, messages = [], reply = HAIKU, replyDelayMs = 0 }: Options = {},
+) {
   const clock = mock.clock(on)
   const box = { text: draft }
-  const seen = { filled: [] as string[], toasts: [] as string[], commands: [] as string[], briefs: [] as string[] }
+  const seen = {
+    filled: [] as string[],
+    toasts: [] as string[],
+    commands: [] as string[],
+    briefs: [] as string[],
+    sent: [] as string[],
+  }
   const asked: { model: string; prompt: string; system: string }[] = []
+  const forks: string[] = []
 
   on('session.usage', () => ({ value: { startedAt: 0, rateLimits: [], context: { window: 1_000_000, tokens: 1, percent } } }))
   on('session.messages', () => ({ value: messages.map(row => ({ ...row, toolUses: [] })) }))
   on('turn.complete', ($, e) => ({ text: e.answer }))
   on('prompt.submit', ($, e) => {
     box.text = ''
+    seen.sent.push(e.text)
     return { text: e.text }
   })
   on('prompt.read', () => ({ value: { text: box.text, cursor: box.text.length } }))
@@ -46,11 +59,15 @@ export function stage(on: On, { percent = 10, draft = '', selection, messages = 
     seen.commands.push(e.command)
     return {}
   })
-  on('model.complete', ($, e) => {
+  on('model.complete', async ($, e) => {
     asked.push({ model: e.model, prompt: e.prompt, system: e.system ?? '' })
-    return { value: { isAnswered: true, text: HAIKU, usage } }
+    if (replyDelayMs > 0) await clock.sleep(replyDelayMs)
+    return { value: { isAnswered: true, text: reply, usage } }
   })
-  on('model.fork', () => ({ value: { isAnswered: true, text: FOUND, usage } }))
+  on('model.fork', ($, e) => {
+    forks.push(e.prompt)
+    return { value: { isAnswered: true, text: FOUND, usage } }
+  })
   on('agent.list', () => ({ value: [] }))
   on('agent.spawn', ($, e) => {
     seen.briefs.push(e.prompt)
@@ -62,7 +79,7 @@ export function stage(on: On, { percent = 10, draft = '', selection, messages = 
     return edit({ origin: { kind: 'composer' }, text: box.text, cursor: box.text.length, start: box.text.length, end: box.text.length, inputText: text })
   }
 
-  return { clock, box, asked, type, ...seen }
+  return { clock, box, asked, forks, type, ...seen }
 }
 
 export const turn = (answer: string, turnId: string, reason: 'answer' | 'aborted' = 'answer') => ({
