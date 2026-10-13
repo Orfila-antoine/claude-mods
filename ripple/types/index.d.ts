@@ -8,6 +8,7 @@ export type Ripple = {
   removed: number
   isNew: boolean
   isGone: boolean
+  times: number
   dependents: string[] | null
 }
 export type Wave = { id: string; frame: number }

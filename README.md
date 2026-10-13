@@ -86,7 +86,7 @@ claude plugin test backstage
 
 Each successful `Edit` or `Write` collapses to one line, `● Edit(src/token.ts) +3 -1`, without the diff block. A failed edit, or one on a sensitive file (`.env*`, `.git*`, `.claude/`, `.codex/`, `.github/`, `.husky/`, `.ssh/`, `.npmrc`, `.mcp.json`, `CLAUDE.md`, `AGENTS.md`, `settings*.json`, `hooks.json`, keys and certificates), keeps the full view. A finished search group reads `● Found it: src/auth.ts:42`.
 
-`/ripple` opens a pane with one section per author, `Claude` then `agent: <its brief>`. Each section is a tree of the files just edited, colored from red to green by their share of added lines: a new file is green, a deleted one (`rm`, `git rm`, `del`, `Remove-Item`) grey. The files that use the latest one join the tree one after another, lit for a moment with `~ uses token.ts`:
+`/ripple` opens a pane with one section per author, `Claude` then `agent: <its brief>`. Each section is a tree of the files just edited, one line per file with its net diff against the last commit (`git diff --numstat HEAD`; summed edits outside git) and `x3` once it is edited 3 times, colored from red to green by its share of added lines: a new file is green, a deleted one (`rm`, `git rm`, `del`, `Remove-Item`) grey. The files that use the latest one join the tree one after another, lit for a moment with `~ uses token.ts`:
 
 ```
 Claude

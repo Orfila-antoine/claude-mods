@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { editColor, editStats, foundIn, isRemovedBy, isSensitive, relativeTo, removedPaths, treeLines } from '../hooks/logic'
+import { editColor, editStats, foundIn, isRemoval, isSensitive, relativeTo, treeLines } from '../hooks/logic'
 
 test('edit stats come from the patch, a new file from its content', () => {
   expect(editStats({ structuredPatch: [{ lines: ['+a', '+b', '-c', ' d'] }] })).toEqual({ added: 2, removed: 1, isNew: false })
@@ -16,14 +16,11 @@ test('a file takes its color from its share of added lines', () => {
   expect(editColor({ added: 5, removed: 0, isGone: true })).toBe('gray')
 })
 
-test('a removal names the files it takes away', () => {
-  const gone = removedPaths('cd /c/repo && rm -f src/token.ts; git rm -r "api" | Remove-Item C:\\repo\\old.ts')
-  expect(gone).toEqual(['src/token.ts', 'api', 'c:/repo/old.ts'])
-  expect(isRemovedBy('C:/repo/src/token.ts', gone)).toBe(true)
-  expect(isRemovedBy('C:/repo/api/client.ts', gone)).toBe(true)
-  expect(isRemovedBy('C:/repo/old.ts', gone)).toBe(true)
-  expect(isRemovedBy('C:/repo/src/auth.ts', gone)).toBe(false)
-  expect(removedPaths('echo rm is fun; grep rmdir x')).toEqual([])
+test('a removal is a command of its own', () => {
+  expect(isRemoval('cd /c/repo && rm -f src/token.ts')).toBe(true)
+  expect(isRemoval('git rm -r api')).toBe(true)
+  expect(isRemoval('Remove-Item C:\\repo\\old.ts')).toBe(true)
+  expect(isRemoval('echo rm is fun; grep rmdir x')).toBe(false)
 })
 
 test('sensitive files are recognised', () => {

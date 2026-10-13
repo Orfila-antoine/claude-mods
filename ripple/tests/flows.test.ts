@@ -8,8 +8,12 @@ const OPEN = { command: 'ripple', args: '', origin: { kind: 'composer' as const 
 
 function stage(on: On, session = SESSION) {
   const clock = mock.clock(on)
+  const gone = new Set<string>()
   on('session.root', () => ({ value: session }))
-  on('fs.exists', ($, e) => ({ value: e.path.replace(/\\/g, '/').endsWith(`${ROOT}/.git`) }))
+  on('fs.exists', ($, e) => {
+    const path = e.path.replace(/\\/g, '/')
+    return { value: path.endsWith('/.git') ? path.endsWith(`${ROOT}/.git`) : ![...gone].some(one => path.endsWith(one)) }
+  })
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('command.register', ($, e) => ({ value: { command: e.name } }))
   on('tool.call', ($, e) => {
@@ -19,7 +23,7 @@ function stage(on: On, session = SESSION) {
     if (call.tool === 'Grep') return { result: { filenames: [`${ROOT}/src/auth.ts`, `${ROOT}/src/token.ts`, `${ROOT}/api/client.ts`] }, text: '' }
     return { result: {}, text: 'ok' }
   })
-  return { clock }
+  return { clock, gone }
 }
 
 const pane = ($: Engine) =>
@@ -54,7 +58,7 @@ test('dependents are found when the session is the repo itself', async ($, on) =
   expect(await textOf(view)).toContain('  client.ts')
 })
 
-test('a file edited twice stays lit as the latest edit', async ($, on) => {
+test('a file edited twice is one line, lit, with the counts summed', async ($, on) => {
   const { clock } = stage(on)
   await $.command.run(OPEN)
   const view = await pane($)
@@ -64,20 +68,90 @@ test('a file edited twice stays lit as the latest edit', async ($, on) => {
   const name = (await view.findAll({ type: 'Text' })).find(found => found.text === '  token.ts' && 'color' in found.props)
   expect(name?.props.bold).toBe(true)
   expect(name?.props.color).toBe('#d5d550')
+  const text = await textOf(view)
+  expect(text).toContain('  token.ts +2 -2 x2')
+  expect(text.split('  token.ts +').length).toBe(2)
 })
 
-test('a new file reads green, a removed one grey', async ($, on) => {
+function git(on: On, answers: Record<string, string>) {
+  on('process.run', ($, e) => {
+    const verb = e.argv[1] ?? ''
+    return { value: { exitCode: 0, stdout: answers[verb] ?? '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+  })
+  on('fs.read', () => ({ value: 'one\ntwo\nthree\n' }))
+}
+
+test('in a git repo, the counts are the net diff against HEAD, not the sum of edits', async ($, on) => {
   const { clock } = stage(on)
+  git(on, { diff: '3\t1\tsrc/token.ts\n' })
+  await $.command.run(OPEN)
+  const view = await pane($)
+  await $.tool.call({ tool: 'Edit', file_path: `${ROOT}/src/token.ts`, old_string: 'a', new_string: 'b' })
+  await $.tool.call({ tool: 'Edit', file_path: `${ROOT}/src/token.ts`, old_string: 'b', new_string: 'c' })
+  await clock.advance(60 * 40)
+  expect(await textOf(view)).toContain('  token.ts +3 -1 x2')
+})
+
+test('an edit undone reads +0 -0 against HEAD', async ($, on) => {
+  const { clock } = stage(on)
+  git(on, { diff: '', 'ls-files': 'src/token.ts\n' })
+  await $.command.run(OPEN)
+  const view = await pane($)
+  await $.tool.call({ tool: 'Edit', file_path: `${ROOT}/src/token.ts`, old_string: 'a', new_string: 'b' })
+  await clock.advance(60 * 40)
+  expect(await textOf(view)).toContain('  token.ts +0 -0')
+})
+
+test('an untracked file counts all its lines as new', async ($, on) => {
+  const { clock } = stage(on)
+  git(on, { diff: '', 'ls-files': '' })
+  await $.command.run(OPEN)
+  const view = await pane($)
+  await $.tool.call({ tool: 'Edit', file_path: `${ROOT}/src/token.ts`, old_string: 'a', new_string: 'b' })
+  await clock.advance(60 * 40)
+  expect(await textOf(view)).toContain('  token.ts +3 -0')
+  expect(await colorOf(view, '  token.ts')).toBe('#50d550')
+})
+
+test('every edited file stays in the tree, not only the last few', async ($, on) => {
+  const { clock } = stage(on)
+  await $.command.run(OPEN)
+  const view = await pane($)
+  const names = Array.from({ length: 25 }, (_, k) => `file${k}`)
+  for (const name of names) {
+    await $.tool.call({ tool: 'Edit', file_path: `${ROOT}/lib/${name}.ts`, old_string: 'a', new_string: 'b' })
+    await clock.advance(60 * 40)
+  }
+  const text = await textOf(view)
+  for (const name of names) expect(text).toContain(`  ${name}.ts`)
+})
+
+const colorOf = async (view: Awaited<ReturnType<typeof pane>>, text: string) =>
+  (await view.findAll({ type: 'Text' })).find(found => found.text === text && 'color' in found.props)?.props.color
+
+test('a new file reads green, a removed one grey', async ($, on) => {
+  const { clock, gone } = stage(on)
   await $.command.run(OPEN)
   const view = await pane($)
   await $.tool.call({ tool: 'Write', file_path: `${ROOT}/src/fresh.ts`, content: 'a' })
   await $.tool.call({ tool: 'Edit', file_path: `${ROOT}/src/token.ts`, old_string: 'a', new_string: 'b' })
   await clock.advance(60 * 40)
+  gone.add(`${ROOT}/src/token.ts`)
   await $.tool.call({ tool: 'Bash', command: `cd ${ROOT} && rm src/token.ts` })
   await clock.advance(60 * 40)
-  const colorOf = async (text: string) => (await view.findAll({ type: 'Text' })).find(found => found.text === text && 'color' in found.props)?.props.color
-  expect(await colorOf('  fresh.ts')).toBe('#50d550')
-  expect(await colorOf('  token.ts')).toBe('gray')
+  expect(await colorOf(view, '  fresh.ts')).toBe('#50d550')
+  expect(await colorOf(view, '  token.ts')).toBe('gray')
+})
+
+test('a removal elsewhere leaves the files still on disk in color', async ($, on) => {
+  const { clock } = stage(on)
+  await $.command.run(OPEN)
+  const view = await pane($)
+  await $.tool.call({ tool: 'Write', file_path: `${ROOT}/src/fresh.ts`, content: 'a' })
+  await clock.advance(60 * 40)
+  await $.tool.call({ tool: 'Bash', command: 'cd /elsewhere && rm -rf src repo' })
+  await clock.advance(60 * 40)
+  expect(await colorOf(view, '  fresh.ts')).toBe('#50d550')
 })
 
 test('the tree grows as the wave reaches each dependent', async ($, on) => {

@@ -47,23 +47,7 @@ export function editColor(edit: { added: number; removed: number; isNew?: boolea
   return hueToHex(edit.isNew ? 120 : total === 0 ? 60 : (edit.added / total) * 120)
 }
 
-const REMOVE = /(?:^|[;&|(]\s*)(?:git\s+rm|rm|del|Remove-Item)\s([^;&|)]*)/gi
-
-const comparable = (path: string) => toSlash(path).toLowerCase().replace(/^\/([a-z])\//, '$1:/').replace(/\/+$/, '')
-
-export function removedPaths(command: string) {
-  return [...command.matchAll(REMOVE)].flatMap(([, args = '']) =>
-    args
-      .split(/\s+/)
-      .filter(arg => arg && !arg.startsWith('-'))
-      .map(arg => comparable(arg.replace(/^['"]|['"]$/g, '').replace(/^\.\//, ''))),
-  )
-}
-
-export function isRemovedBy(path: string, removed: readonly string[]) {
-  const target = `/${comparable(path)}`
-  return removed.some(arg => target.endsWith(`/${arg}`) || target.includes(`/${arg}/`))
-}
+export const isRemoval = (command: string) => /(?:^|[;&|(]\s*)(?:git\s+rm|rm|del|Remove-Item)\s/i.test(command)
 
 type GroupCall = { tool: string; isErrored: boolean; output?: unknown }
 

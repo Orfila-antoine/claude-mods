@@ -2,9 +2,9 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { Ripple } from '../types'
-import { editColor, editStats, foundIn, isRemovedBy, isSensitive, relativeTo, removedPaths, shortPath, toSlash, treeLines } from './logic'
+import { editColor, editStats, foundIn, isRemoval, isSensitive, relativeTo, shortPath, toSlash, treeLines } from './logic'
 
-const edits = atom({ plugin: 'ripple', key: 'edits' } as const, [], { shape: 'ripple-v2' })
+const edits = atom({ plugin: 'ripple', key: 'edits' } as const, [], { shape: 'ripple-v3' })
 const wave = atom({ plugin: 'ripple', key: 'wave' } as const, null)
 const isOpen = atom({ plugin: 'ripple', key: 'isOpen' } as const, false)
 
@@ -13,7 +13,6 @@ const WAVE_FRAMES = 33
 const WAVE_MS = 120
 const GREP_DELAY_MS = 300
 const MAIN = 'main'
-const MAX_EDITS = 20
 const EDIT_TOOLS = new Set(['Edit', 'Write'])
 const SHELL_TOOLS = new Set(['Bash', 'PowerShell'])
 
@@ -61,6 +60,22 @@ async function dependentsOf($: EngineInterface, root: string, file: string) {
   return files.filter((one): one is string => typeof one === 'string' && !toSlash(one).endsWith(`/${name}`)).slice(0, 8).map(one => relativeTo(root, one))
 }
 
+async function netDiff($: EngineInterface, root: string, file: string) {
+  const git = (...args: string[]) => $.process.run(['git', ...args], { cwd: root }).catch(() => null)
+  const diff = await git('diff', '--numstat', 'HEAD', '--', file)
+  if (!diff || diff.exitCode !== 0) return null
+  if (diff.stdout.trim()) {
+    const [added, removed] = diff.stdout.trim().split('\t').map(Number)
+    return Number.isFinite(added) && Number.isFinite(removed) ? { added: added ?? 0, removed: removed ?? 0, isNew: false } : null
+  }
+  const tracked = await git('ls-files', '--', file)
+  if (!tracked || tracked.exitCode !== 0) return null
+  if (tracked.stdout.trim()) return { added: 0, removed: 0, isNew: false }
+  const content = await $.fs.read(file).catch(() => null)
+  if (typeof content !== 'string') return null
+  return { added: content.split('\n').length - (content.endsWith('\n') ? 1 : 0), removed: 0, isNew: true }
+}
+
 async function labelOf($: EngineInterface, agent: string) {
   if (agent === MAIN) return 'Claude'
   const running = await $.agent.list().catch(() => [])
@@ -78,9 +93,17 @@ async function track($: EngineInterface, id: string, file: string, output: unkno
     file: relativeTo(root, file),
     ...editStats(output),
     isGone: false,
+    times: 1,
     dependents: root ? null : [],
   }
-  await update($, edits, list => [entry, ...list].slice(0, MAX_EDITS))
+  const net = root ? await netDiff($, root, file) : null
+  await update($, edits, list => {
+    const before = list.find(one => one.agent === agent && one.path === entry.path)
+    const summed = before
+      ? { ...entry, added: before.added + entry.added, removed: before.removed + entry.removed, isNew: before.isNew || entry.isNew, times: before.times + 1 }
+      : entry
+    return [{ ...summed, ...net }, ...list.filter(one => one !== before)]
+  })
   if (!root) return
   await $.clock.sleep(GREP_DELAY_MS)
   const isLatest = (await read($, edits)).find(one => one.agent === agent)?.id === id
@@ -126,9 +149,11 @@ export const register: Register = on => {
       $.clock.after(0, () => void track($, e.tool_use_id, file, ran.result, e.agentId ?? MAIN).catch(() => undefined))
     }
     const command = 'command' in e ? e.command : undefined
-    if (SHELL_TOOLS.has(e.tool) && typeof command === 'string' && !ran.isError) {
-      const gone = removedPaths(command)
-      if (gone.length > 0) await update($, edits, list => list.map(one => (isRemovedBy(one.path, gone) ? { ...one, isGone: true } : one)))
+    if (SHELL_TOOLS.has(e.tool) && typeof command === 'string' && !ran.isError && isRemoval(command)) {
+      const list = await read($, edits)
+      const missing = new Set<string>()
+      for (const one of list) if (!one.isGone && !(await $.fs.exists(one.path))) missing.add(one.id)
+      if (missing.size > 0) await update($, edits, current => current.map(one => (missing.has(one.id) ? { ...one, isGone: true } : one)))
     }
     return ran
   })
@@ -180,7 +205,7 @@ export const register: Register = on => {
         {sections(list).map(({ latest, older }) => {
           const frame = current?.id === latest.id ? current.frame : WAVE_FRAMES
           const reached = (latest.dependents ?? []).filter((_, k) => frame >= k * 3)
-          const edited = new Map([latest, ...older.slice(0, 3)].map((one, rank) => [one.file, { one, rank }] as const).reverse())
+          const edited = new Map([latest, ...older].map((one, rank) => [one.file, { one, rank }]))
           const usedName = latest.file.split('/').pop() ?? latest.file
           return (
             <Box key={`section-${latest.agent}`} flexDirection="column" marginBottom={1}>
@@ -197,6 +222,7 @@ export const register: Register = on => {
                       <Text color={editColor(edit.one)} bold={edit.rank === 0 && !isGone}>{`${indent}${line.name}`}</Text>
                       <Text color={isGone ? 'gray' : 'green'}> +{edit.one.added}</Text>
                       <Text color={isGone ? 'gray' : 'red'}> -{edit.one.removed}</Text>
+                      {edit.one.times > 1 && <Text bold={!isGone} color={isGone ? 'gray' : undefined}> x{edit.one.times}</Text>}
                     </Text>
                   )
                 }
