@@ -321,3 +321,30 @@ test('the diff under a collapsed edit is hidden, a sensitive file keeps it', asy
   })
   expect(await sensitive.findAll({ type: 'Box' })).toEqual([])
 })
+
+test('a shell command that edits files shows one line per file, not its diff', async ($, on) => {
+  stage(on)
+  const files = [
+    { filePath: `${ROOT}/src/token.ts`, hunks: [{ lines: [' a', '-b', '+c', '+d'] }] },
+    { filePath: `${ROOT}/src/new.ts`, hunks: [{ lines: ['+x'] }], created: true as const },
+  ]
+  const quiet = await $.ui.mount({
+    plugin: 'ripple', surface: 'terminal', component: 'ToolResult',
+    props: { tool_use_id: 'toolu_4', tool: 'Bash', output: { stdout: '', stderr: '', bashEditDiff: { files, moreFiles: 2 } }, isErrored: false },
+  })
+  expect(await quiet.findAll({ type: 'engine' })).toEqual([])
+  const shown = async (view: typeof quiet) => (await view.findAll({ type: 'Text' })).map(found => found.text).join('|')
+  expect(await shown(quiet)).toContain('token.ts|  +2| -1')
+  expect(await shown(quiet)).toContain('new.ts|  +1| -0')
+  expect(await shown(quiet)).toContain('+2 more files')
+  const loud = await $.ui.mount({
+    plugin: 'ripple', surface: 'terminal', component: 'ToolResult',
+    props: { tool_use_id: 'toolu_5', tool: 'Bash', output: { stdout: 'done', stderr: '', bashEditDiff: { files, moreFiles: 0 } }, isErrored: false },
+  })
+  expect(await loud.findAll({ type: 'engine' })).toHaveLength(1)
+  const sensitive = await $.ui.mount({
+    plugin: 'ripple', surface: 'terminal', component: 'ToolResult',
+    props: { tool_use_id: 'toolu_6', tool: 'Bash', output: { stdout: '', stderr: '', bashEditDiff: { files: [{ filePath: `${ROOT}/.env.local`, hunks: [] }], moreFiles: 0 } }, isErrored: false },
+  })
+  expect(await sensitive.findAll({ type: 'Box' })).toEqual([])
+})

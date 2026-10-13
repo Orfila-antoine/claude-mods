@@ -123,6 +123,12 @@ function sections(list: Ripple[]) {
     .flatMap(([, [latest, ...older]]) => (latest ? [{ latest, older }] : []))
 }
 
+type ShellOutput = {
+  stdout?: string
+  stderr?: string
+  bashEditDiff?: { files: { filePath: string; hunks: unknown[]; created?: true; deleted?: true }[]; moreFiles?: number }
+}
+
 const collapsible = (tool: string, file: unknown, isBroken: boolean): file is string =>
   EDIT_TOOLS.has(tool) && !isBroken && typeof file === 'string' && !isSensitive(file)
 
@@ -223,9 +229,35 @@ export const register: Register = on => {
 
   on('ui.render', { component: 'ToolResult' }, async ($, e, next) => {
     const file = (e.props.output as { filePath?: unknown } | null)?.filePath
-    if (!collapsible(e.props.tool, file, e.props.isErrored)) return next(e)
-    const { Box } = $.ui.resolve(e)
-    return <Box />
+    const { Box, Text } = $.ui.resolve(e)
+    if (collapsible(e.props.tool, file, e.props.isErrored)) return <Box />
+    const shell = e.props.tool === 'Bash' && !e.props.isErrored ? (e.props.output as ShellOutput | null) : null
+    const changed = shell?.bashEditDiff?.files ?? []
+    if (!shell || changed.length === 0 || changed.some(one => isSensitive(one.filePath))) return next(e)
+    const { bashEditDiff, ...rest } = shell
+    const printed = `${rest.stdout ?? ''}${rest.stderr ?? ''}`.trim() ? await next({ ...e, props: { ...e.props, output: rest } }) : null
+    const more = bashEditDiff?.moreFiles ?? 0
+    return (
+      <Box flexDirection="column">
+        {printed}
+        {changed.map((one, k) => {
+          const stats = editStats({ type: one.created ? 'create' : 'update', structuredPatch: one.hunks })
+          const path = shortPath(one.filePath)
+          const cut = path.lastIndexOf('/') + 1
+          return (
+            <Text key={one.filePath}>
+              <Text dimColor>{k === 0 && !printed ? '  ⎿  ' : '     '}</Text>
+              <Text color={editColor({ ...stats, isGone: one.deleted })}>● </Text>
+              <Text dimColor>{path.slice(0, cut)}</Text>
+              <Text bold>{path.slice(cut)}</Text>
+              <Text color={ADDED}>{`  +${stats.added}`}</Text>
+              <Text color={REMOVED}>{` -${stats.removed}`}</Text>
+            </Text>
+          )
+        })}
+        {more > 0 && <Text dimColor>{`     +${more} more files`}</Text>}
+      </Box>
+    )
   })
 
   on('ui.render', { component: 'ToolGroup' }, async ($, e, next) => {
