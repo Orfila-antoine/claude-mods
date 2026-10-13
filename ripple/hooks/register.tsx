@@ -1,14 +1,15 @@
 import { atom, memberOf, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { Fold, Last, Ripple } from '../types'
+import type { Last, Ripple, Run } from '../types'
 import { ADDED, REMOVED, editColor, editStats, foundIn, isHousekeeping, isRemoval, isSensitive, relativeTo, shortPath, toSlash, treeLines } from './logic'
 
 const edits = atom({ plugin: 'ripple', key: 'edits' } as const, [], { shape: 'ripple-v3' })
 const wave = atom({ plugin: 'ripple', key: 'wave' } as const, null)
 const isOpen = atom({ plugin: 'ripple', key: 'isOpen' } as const, false)
-const last = atom({ plugin: 'ripple', key: 'last' } as const, {}, { shape: 'ripple-last-v1' })
-const fold = atom({ plugin: 'ripple', key: 'fold' } as const, null, { shape: 'ripple-fold-v1' })
+const last = atom({ plugin: 'ripple', key: 'last' } as const, {}, { shape: 'ripple-last-v2' })
+const fold = atom({ plugin: 'ripple', key: 'fold' } as const, null, { shape: 'ripple-fold-v2' })
+const runs = atom({ plugin: 'ripple', key: 'runs' } as const, null, { shape: 'ripple-runs-v2' })
 
 const PANE = 'ripple'
 const WAVE_FRAMES = 33
@@ -143,6 +144,11 @@ export const register: Register = on => {
     return next(e)
   })
 
+  on('turn.start', async ($, e, next) => {
+    if ((await read($, last))[MAIN]) await update($, last, all => ({ ...all, [MAIN]: null }))
+    return next(e)
+  })
+
   on('tool.call', async ($, e, next) => {
     const agent = e.agentId ?? MAIN
     const id = e.tool_use_id
@@ -151,20 +157,20 @@ export const register: Register = on => {
     const path = joins ? toSlash(file) : ''
     const before = (await read($, last))[agent] ?? null
     const continues = joins && before !== null && before.file === path
-    if (continues) {
-      await update($, memberOf(fold, { requestId: id }), () => ({ times: before.times + 1, added: before.added, removed: before.removed }))
-      await update($, memberOf(fold, { requestId: before.id }), (): Fold => 'hidden')
+    const runId = continues ? before.run : id
+    let previous: Run | null = null
+    if (joins) {
+      await update($, memberOf(fold, { requestId: id }), () => ({ run: runId }))
+      previous = continues ? await read($, memberOf(runs, { requestId: runId })) : null
+      await update($, memberOf(runs, { requestId: runId }), () =>
+        previous ? { head: id, times: previous.times + 1, added: previous.added, removed: previous.removed } : { head: id, times: 1, added: 0, removed: 0 },
+      )
     }
-    let done: Last | null = null
+    let stats: { added: number; removed: number } | null = null
     try {
       const ran = await next(e)
       const isDenied = 'deny' in ran && ran.deny
-      if (joins && !isDenied && !ran.isError) {
-        const stats = editStats(ran.result)
-        done = continues
-          ? { id, file: path, times: before.times + 1, added: before.added + stats.added, removed: before.removed + stats.removed }
-          : { id, file: path, times: 1, ...stats }
-      }
+      if (joins && !isDenied && !ran.isError) stats = editStats(ran.result)
       if (isDenied) return ran
       if (EDIT_TOOLS.has(e.tool) && typeof file === 'string' && !ran.isError && !isHousekeeping(file)) {
         $.clock.after(0, () => void track($, id, file, ran.result, agent).catch(() => undefined))
@@ -178,12 +184,14 @@ export const register: Register = on => {
       }
       return ran
     } finally {
-      if (continues && !done) {
-        await update($, memberOf(fold, { requestId: before.id }), () => (before.times > 1 ? before : null))
-        await update($, memberOf(fold, { requestId: id }), () => null)
+      const done = stats
+      if (joins) {
+        await update($, memberOf(runs, { requestId: runId }), run =>
+          done && run ? { ...run, added: run.added + done.added, removed: run.removed + done.removed } : previous,
+        )
       }
-      if (done?.times && done.times > 1) await update($, memberOf(fold, { requestId: id }), () => done)
-      if (done || before) await update($, last, all => ({ ...all, [agent]: done }))
+      const after: Last | null = done ? { run: runId, file: path } : null
+      if (after || before) await update($, last, all => ({ ...all, [agent]: after }))
     }
   })
 
@@ -191,13 +199,13 @@ export const register: Register = on => {
     const { tool, input, output, isRunning, isErrored, isInterrupted } = e.props
     const file = (input as { file_path?: unknown } | null)?.file_path
     if (!collapsible(tool, file, isErrored || isInterrupted)) return next(e)
-    const folded = await read($, memberOf(fold, { requestId: e.props.tool_use_id }))
+    const member = await read($, memberOf(fold, { requestId: e.props.tool_use_id }))
+    const run = member ? await read($, memberOf(runs, { requestId: member.run })) : null
     const { Box, Text } = $.ui.resolve(e)
-    if (folded === 'hidden') return <Box />
-    if (!folded && isRunning && Object.values(await read($, last)).some(one => one?.file === toSlash(file))) return <Box />
-    const stats = folded ?? editStats(output)
-    const times = folded?.times ?? 1
-    const isPending = isRunning && !folded
+    if (member ? run?.head !== e.props.tool_use_id : isRunning || output == null) return <Box />
+    const times = run?.times ?? 1
+    const stats = run && times > 1 ? run : editStats(output)
+    const isPending = isRunning && times === 1
     const path = shortPath(file)
     const cut = path.lastIndexOf('/') + 1
     return (

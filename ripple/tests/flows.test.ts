@@ -246,6 +246,21 @@ test('an edit joining a run shows the run counts at once, not a pending line', a
   expect(await lineOf(await row($, 'e2'))).toBe('● Edit  src/token.ts  +2 -2 x2')
 })
 
+test('a queued edit with no result yet stays hidden, not +0 -0', async ($, on) => {
+  stage(on)
+  expect(await lineOf(await row($, 'e9', { output: null }))).toBeNull()
+})
+
+test('a new turn starts a new run', async ($, on) => {
+  stage(on)
+  on('turn.start', ($, e) => ({ turnId: e.turnId }))
+  await edit($, 'e1')
+  await $.turn.start({ text: 'again', turnId: 't2' })
+  await edit($, 'e2')
+  expect(await lineOf(await row($, 'e1'))).toBe('● Edit  src/token.ts  +1 -1')
+  expect(await lineOf(await row($, 'e2'))).toBe('● Edit  src/token.ts  +1 -1')
+})
+
 test('another call in between starts a new run', async ($, on) => {
   stage(on)
   await edit($, 'e1')
@@ -278,11 +293,19 @@ test('a failed or aborted edit leaves the run, the one before shows again', asyn
   expect(await lineOf(await row($, 'e3'))).toBe('● Edit  src/token.ts  +1 -1')
 })
 
-test('an edit still running is already one line, so the diff never flashes', async ($, on) => {
-  stage(on)
-  const running = await row($, 'toolu_4', { output: null, isRunning: true })
-  expect(await lineOf(running)).toBe('● Edit  src/token.ts  …')
-  expect(await running.findAll({ type: 'engine' })).toEqual([])
+test('an edit waits hidden until it starts, then runs as one line, so no diff flashes', async ($, on) => {
+  const { clock, held } = stage(on)
+  expect(await lineOf(await row($, 'e1', { output: null, isRunning: true }))).toBeNull()
+  let release = () => {}
+  held.set('e1', new Promise(resolve => (release = resolve)))
+  const running = edit($, 'e1')
+  await clock.advance(1)
+  const started = await row($, 'e1', { output: null, isRunning: true })
+  expect(await lineOf(started)).toBe('● Edit  src/token.ts  …')
+  expect(await started.findAll({ type: 'engine' })).toEqual([])
+  release()
+  await running
+  expect(await lineOf(await row($, 'e1'))).toBe('● Edit  src/token.ts  +1 -1')
 })
 
 test('the diff under a collapsed edit is hidden, a sensitive file keeps it', async ($, on) => {
