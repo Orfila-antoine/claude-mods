@@ -6,9 +6,10 @@ import { sparks } from './sparks'
 
 const nextStep = atom({ plugin: 'cues', key: 'nextStep' } as const, null)
 const push = atom({ plugin: 'cues', key: 'push' } as const, null)
+const pushed = atom({ plugin: 'cues', key: 'pushed' } as const, null)
 const noticed = atom({ plugin: 'cues', key: 'noticed' } as const, false)
 
-const SPARK_FRAMES = 26
+const SPARK_FRAMES = 50
 const SPARK_MS = 60
 const CUES = [
   'End every answer with exactly one line that starts with "Next:" and names the single next action the developer can take.',
@@ -61,6 +62,11 @@ export const register: Register = on => {
       const step = nextStepOf(e.answer)
       await update($, nextStep, () => step)
     }
+    const label = e.agentId ? null : await read($, pushed)
+    if (label) {
+      await update($, pushed, () => null)
+      await animatePush($, label).catch(() => undefined)
+    }
     return next(e)
   })
 
@@ -68,7 +74,8 @@ export const register: Register = on => {
     const command = String(e.command ?? '')
     const ran = await next(e)
     if (!('deny' in ran && ran.deny) && !ran.isError && isPush(command)) {
-      await animatePush($, pushLabel(String(ran.text ?? ''))).catch(() => undefined)
+      const label = pushLabel(String(ran.text ?? ''))
+      await update($, pushed, () => label)
     }
     return ran
   })

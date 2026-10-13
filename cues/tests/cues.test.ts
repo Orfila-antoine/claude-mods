@@ -30,17 +30,22 @@ test('the start line prefers the bead in progress', () => {
   expect(startLine(ready)).toBe('Start: Ready one')
 })
 
-test('a successful git push draws the sparks above the band, then goes away', async ($, on) => {
+test('a git push draws the sparks above the band once the turn ends, then they go away', async ($, on) => {
   const clock = mock.clock(on)
   on('ui.render', () => ({ type: 'engine' as const, ref: 0 }))
+  on('turn.complete', ($, e) => ({ text: e.answer }))
   on('tool.call', () => ({ result: {}, text: 'To github.com:me/x.git\n   af68d1d..9199dfc  main -> main' }))
-  await $.tool.call({ tool: 'Bash', command: 'git push origin main' })
+  await $.tool.call({ tool: 'Bash', command: 'cd repo && git push origin main 2>&1 | tail -1' })
   const band = await $.ui.mount({
     plugin: 'cues', surface: 'terminal', component: 'AbovePrompt',
-    props: { hasSurvey: false, isWorking: false, maxRows: 10, bodyColumns: 100, scroll: { offset: 0, bodyRows: 9 }, view: {} },
+    props: { hasSurvey: false, isWorking: true, maxRows: 10, bodyColumns: 100, scroll: { offset: 0, bodyRows: 9 }, view: {} },
   })
+  expect(await band.findAll({ key: 'push-sparks' })).toEqual([])
+  await $.turn.complete({ answer: 'Pushed.', durationMs: 1, isAborted: false, turnId: 't', reason: 'answer' })
   expect(await band.findAll({ key: 'push-sparks' })).toHaveLength(1)
   expect(await band.findAll({ type: 'engine' })).toHaveLength(1)
+  await clock.advance(60 * 30)
+  expect(await band.findAll({ key: 'push-sparks' })).toHaveLength(1)
   await clock.advance(60 * 40)
   expect(await band.findAll({ key: 'push-sparks' })).toEqual([])
 })

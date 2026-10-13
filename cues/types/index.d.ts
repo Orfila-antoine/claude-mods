@@ -5,6 +5,7 @@ declare module 'claude-code' {
     cues: {
       nextStep: string | null
       push: Push | null
+      pushed: string | null
       noticed: boolean
     }
   }

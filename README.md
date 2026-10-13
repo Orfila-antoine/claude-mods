@@ -110,7 +110,7 @@ Dependents are found with one `Grep` for the file's name inside its git repo, 30
 - Claude ends each answer with one `Next:` line, and the line under your empty prompt shows it as `next: …`.
 - Options in Claude's questions state their consequence: files touched, migrations, impact on clients.
 - The first line of a session reads `Week 3 in a row, rest days are free.` and `Resume: <your bead in progress>` (from `.beads/issues.jsonl` when there is one).
-- A successful `git push` plays eight sparks and `pushed 9199dfc -> main` above the band over the prompt, for 1.5 s.
+- A successful `git push` plays eight sparks and `pushed 9199dfc -> main` above the band over the prompt when Claude's turn ends, for 3 s.
 
 `cues` adds two lines to the system prompt (the `Next:` line and the option consequences).
 
