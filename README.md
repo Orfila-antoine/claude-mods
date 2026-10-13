@@ -136,6 +136,22 @@ Before the conversation clears, the chat, the band above the prompt and the line
 /plugin install wipe@claude-mods
 ```
 
+## mirror
+
+**Tells you when the conversation goes round in circles.**
+
+After each turn it looks at the last three exchanges, with no model call: the same request three times, the same answer three times, or the same tool failing three times in one turn. Then a toast and a line above the prompt name the spiral:
+
+```
+🪞 Spiral: The last 3 answers say the same thing.  [Break the loop] [Dismiss] [▸ What repeats]
+```
+
+`Break the loop` (`b`) puts a prompt in the box that asks Claude to name the assumption that might be wrong and ask one diagnostic question before changing anything. `What repeats` (`w`) unfolds one short line with the repeated words or the last failing call.
+
+```
+/plugin install mirror@claude-mods
+```
+
 ## License
 
 MIT

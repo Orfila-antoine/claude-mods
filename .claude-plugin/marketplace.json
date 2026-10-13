@@ -22,6 +22,11 @@
       "name": "wipe",
       "source": "./wipe",
       "description": "Screen wipes for /clear and /new: black hole, fall, dust, fade, tv; /wipe <effect> plays one without clearing"
+    },
+    {
+      "name": "mirror",
+      "source": "./mirror",
+      "description": "Spots a spiral (the same request, the same answer or the same failing tool, three times) and offers to break the loop"
     }
   ]
 }
