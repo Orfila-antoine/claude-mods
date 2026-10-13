@@ -1,0 +1,8 @@
+{
+  "name": "ripple",
+  "version": "0.1.0",
+  "description": "Edits collapse to one line in the conversation; a /ripple pane shows the edited files and the files that use them as a growing tree, one section per agent",
+  "author": { "name": "Antoine Orfila" },
+  "license": "MIT",
+  "types": "./types/index.d.ts"
+}

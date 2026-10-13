@@ -7,6 +7,16 @@
       "name": "backstage",
       "source": "./backstage",
       "description": "Buttons above the prompt: rewrite your prompt in one key, verify Claude's weakest claim with a read-only scout, send one of three next prompts in one click, hand off to a fresh session"
+    },
+    {
+      "name": "ripple",
+      "source": "./ripple",
+      "description": "Edits collapse to one line in the conversation; a /ripple pane shows the edited files and the files that use them as a growing tree, one section per agent"
+    },
+    {
+      "name": "cues",
+      "source": "./cues",
+      "description": "Small cues around the prompt: a Next step from each answer in the hint line, options that state their consequence, a start-of-session line, sparks on git push"
     }
   ]
 }

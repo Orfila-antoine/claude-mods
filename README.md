@@ -80,6 +80,44 @@ claude plugin validate backstage
 claude plugin test backstage
 ```
 
+## ripple
+
+**Edits stop flooding the conversation, and you see what they ripple into.**
+
+Each successful `Edit` or `Write` collapses to one line, `● Edit(src/token.ts) +3 -1`, without the diff block. A failed edit, or one on a sensitive file (`.env*`, `.git*`, `.claude/`, `.codex/`, `.github/`, `.husky/`, `.ssh/`, `.npmrc`, `.mcp.json`, `CLAUDE.md`, `AGENTS.md`, `settings*.json`, `hooks.json`, keys and certificates), keeps the full view. A finished search group reads `● Found it: src/auth.ts:42`.
+
+`/ripple` opens a pane with one section per author, `Claude` then `agent: <its brief>`. Each section is a tree of the files just edited, colored from red to green by their share of added lines: a new file is green, a deleted one (`rm`, `git rm`, `del`, `Remove-Item`) grey. The files that use the latest one join the tree one after another, lit for a moment with `~ uses token.ts`:
+
+```
+Claude
+src/
+  auth.ts  ~ uses token.ts
+  token.ts +3 -1
+api/
+  client.ts
+```
+
+Dependents are found with one `Grep` for the file's name inside its git repo, 300 ms after the agent's latest edit. Nothing is searched while the pane is closed, nor outside a git repo except under the session's own folder.
+
+```
+/plugin install ripple@claude-mods
+```
+
+## cues
+
+**Small cues around the prompt, none of them a popup.**
+
+- Claude ends each answer with one `Next:` line, and the line under your empty prompt shows it as `next: …`.
+- Options in Claude's questions state their consequence: files touched, migrations, impact on clients.
+- The first line of a session reads `Week 3 in a row, rest days are free.` and `Resume: <your bead in progress>` (from `.beads/issues.jsonl` when there is one).
+- A successful `git push` plays eight sparks and `pushed 9199dfc -> main` above the band over the prompt, for 1.5 s.
+
+`cues` adds two lines to the system prompt (the `Next:` line and the option consequences).
+
+```
+/plugin install cues@claude-mods
+```
+
 ## License
 
 MIT
