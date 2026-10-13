@@ -118,6 +118,24 @@ Dependents are found with one `Grep` for the file's name inside its git repo, 30
 /plugin install cues@claude-mods
 ```
 
+## wipe
+
+**`/clear` and `/new` stop being a cut: the screen goes away with style.**
+
+Before the conversation clears, the chat, the band above the prompt and the line under it play one effect together, for about 1.5 s, then the clear runs:
+
+- `blackhole`: the text spirals into a hole at the center, purple then orange then yellow.
+- `fall`: the rows fall to the bottom of the screen, the lowest first.
+- `dust`: from left to right, the characters crumble into ash and drift away.
+- `fade`: the text dims to black from the top down.
+- `tv`: an old TV switching off: the screen squashes into a bright line, the line into a dot, the dot goes out.
+
+`/wipe <effect>` plays one without clearing anything (`/wipe` alone picks one at random, as `/clear` does). The effect redraws the conversation from its text, since a mod cannot read the screen: line breaks and colours differ a little from what was there. The prompt box itself stays as it is.
+
+```
+/plugin install wipe@claude-mods
+```
+
 ## License
 
 MIT
