@@ -16,8 +16,8 @@ const pane = ($: Engine) =>
     props: { title: ' ', isFocused: false, bodyColumns: 80, placement: 'dock', scroll: { offset: 0, bodyRows: 30 }, view: {} },
   })
 
-const output = ($: Engine, text: string) =>
-  $.ui.mount({ plugin: 'wipe', surface: 'terminal', component: 'CommandOutput', props: { command: 'wipe', args: '', text, isErrored: false } })
+const output = ($: Engine, text: string, command = 'wipe') =>
+  $.ui.mount({ plugin: 'wipe', surface: 'terminal', component: 'CommandOutput', props: { command, args: '', text, isErrored: false } })
 
 const stage = (on: On) => {
   const clock = mock.clock(on)
@@ -74,7 +74,7 @@ test('/wipe with an unknown name still plays one of the effects', async ($, on) 
   expect(EFFECT_NAMES).toContain(text?.split(' ')[0])
 })
 
-test('/clear plays a wipe in the pane, then clears', async ($, on) => {
+test('/clear plays a wipe in the chat row and the pane, then clears', async ($, on) => {
   const clock = stage(on)
   let cleared = false
   on('command.run', () => {
@@ -82,10 +82,28 @@ test('/clear plays a wipe in the pane, then clears', async ($, on) => {
     return { text: '' }
   })
   on('ui.render', () => ({ type: 'engine' as const, ref: 0 }))
-  const running = $.command.run(run('clear'))
+  const { text } = await $.command.run(run('clear'))
   await clock.advance(100)
+  const chat = await output($, text ?? '', 'clear')
   const side = await pane($)
+  expect(await chat.findAll({ key: 'wipe-chat' })).toHaveLength(1)
   expect(await side.findAll({ key: 'wipe' })).toHaveLength(1)
+  expect(cleared).toBe(false)
+  await clock.advance(5000)
+  expect(cleared).toBe(true)
+})
+
+test('a /new another mod runs plays in the pane and clears before it resolves', async ($, on) => {
+  const clock = stage(on)
+  let cleared = false
+  on('command.run', () => {
+    cleared = true
+    return { text: '' }
+  })
+  on('ui.render', () => ({ type: 'engine' as const, ref: 0 }))
+  const running = $.command.run({ ...run('new'), origin: { kind: 'plugin' as const, name: 'backstage' } })
+  await clock.advance(100)
+  expect(await (await pane($)).findAll({ key: 'wipe' })).toHaveLength(1)
   expect(cleared).toBe(false)
   await clock.advance(5000)
   await running

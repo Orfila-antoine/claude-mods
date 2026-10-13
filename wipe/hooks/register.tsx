@@ -55,15 +55,19 @@ export const register: Register = on => {
   })
 
   on('command.run', async ($, e, next) => {
-    if (e.command === 'wipe') {
-      const effect = await pick($, e.args.trim())
-      const label = `${effect} #${(await $.clock.now()) % 100000}`
-      $.clock.after(0, () => void play($, effect, label).catch(() => undefined))
-      return { text: label }
+    const clears = CLEARS.has(e.command)
+    if (e.command !== 'wipe' && !clears) return next(e)
+    const effect = await pick($, clears ? '' : e.args.trim())
+    if (clears && e.origin.kind !== 'composer') {
+      await play($, effect, '')
+      return next(e)
     }
-    if (!CLEARS.has(e.command)) return next(e)
-    await play($, await pick($, ''), '')
-    return next(e)
+    const label = `${effect} #${(await $.clock.now()) % 100000}`
+    $.clock.after(0, async () => {
+      await play($, effect, label).catch(() => undefined)
+      if (clears) await $.command.run({ command: e.command, args: e.args }).catch(() => undefined)
+    })
+    return { text: label }
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e, next) => {
@@ -78,12 +82,13 @@ export const register: Register = on => {
     return <Raster key="wipe" columns={columns} rows={height} cells={encode(cells, columns, 0, height)} />
   })
 
-  on('ui.render', { component: 'CommandOutput', props: { command: 'wipe' } }, async ($, e, next) => {
+  on('ui.render', { component: 'CommandOutput' }, async ($, e, next) => {
+    if (e.props.command !== 'wipe' && !CLEARS.has(e.props.command)) return next(e)
     const current = await read($, scene)
     if (e.surface !== 'terminal') return next(e)
     const { Raster, Text } = $.ui.resolve(e)
     const effect = current ? EFFECTS[current.effect] : undefined
-    if (!current || !effect || !current.label || !e.props.text.includes(current.label)) return <Text dimColor>◌ wiped</Text>
+    if (!current || !effect || !current.label || !e.props.text.includes(current.label)) return e.props.command === 'wipe' ? <Text dimColor>◌ wiped</Text> : next(e)
     const { columns, rows, chatRows } = screenOf(e.viewport)
     const cells = effect(glyphsOf(current.text, columns, chatRows), columns, rows, timeOf(current.progress))
     return <Raster key="wipe-chat" columns={columns} rows={chatRows} cells={encode(cells, columns, 0, chatRows)} />
