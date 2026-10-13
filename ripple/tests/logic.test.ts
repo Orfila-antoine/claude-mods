@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { editColor, editStats, foundIn, isRemoval, isSensitive, relativeTo, treeLines } from '../hooks/logic'
+import { editColor, editStats, foundIn, isHousekeeping, isRemoval, isSensitive, relativeTo, treeLines } from '../hooks/logic'
 
 test('edit stats come from the patch, a new file from its content', () => {
   expect(editStats({ structuredPatch: [{ lines: ['+a', '+b', '-c', ' d'] }] })).toEqual({ added: 2, removed: 1, isNew: false })
@@ -14,6 +14,15 @@ test('a file takes its color from its share of added lines', () => {
   expect(editColor({ added: 1, removed: 1 })).toBe('#d5d550')
   expect(editColor({ added: 0, removed: 9, isNew: true })).toBe('#50d550')
   expect(editColor({ added: 5, removed: 0, isGone: true })).toBe('gray')
+})
+
+test("Claude's own memory, plans and scratch files are housekeeping", () => {
+  expect(isHousekeeping('C:\\Users\\me\\.claude\\projects\\C--repo\\memory\\fact.md')).toBe(true)
+  expect(isHousekeeping('/home/me/.claude/plans/plan.md')).toBe(true)
+  expect(isHousekeeping('C:/Users/me/.claude/jobs/abc/tmp/script.py')).toBe(true)
+  expect(isHousekeeping('/repo/docs/MEMORY.md')).toBe(true)
+  expect(isHousekeeping('/repo/.claude/agents/juge.md')).toBe(false)
+  expect(isHousekeeping('/repo/src/memory.ts')).toBe(false)
 })
 
 test('a removal is a command of its own', () => {

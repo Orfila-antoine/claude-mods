@@ -9,6 +9,10 @@ const OPEN = { command: 'ripple', args: '', origin: { kind: 'composer' as const 
 function stage(on: On, session = SESSION) {
   const clock = mock.clock(on)
   const gone = new Set<string>()
+  const failing = new Set<string>()
+  const aborting = new Set<string>()
+  const held = new Map<string, Promise<void>>()
+  on('ui.render', () => ({ type: 'engine' as const, ref: 0 }))
   on('session.root', () => ({ value: session }))
   on('fs.exists', ($, e) => {
     const path = e.path.replace(/\\/g, '/')
@@ -16,15 +20,22 @@ function stage(on: On, session = SESSION) {
   })
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('command.register', ($, e) => ({ value: { command: e.name } }))
-  on('tool.call', ($, e) => {
-    const call = e as unknown as { tool: string }
+  on('tool.call', async ($, e) => {
+    const call = e as unknown as { tool: string; tool_use_id: string }
+    await held.get(call.tool_use_id)
+    if (aborting.has(call.tool_use_id)) throw new Error('aborted')
+    if (failing.has(call.tool_use_id)) return { result: 'String not found', text: 'String not found', isError: true }
     if (call.tool === 'Edit') return { result: { structuredPatch: [{ lines: [' import x', '-const ttl = 60', '+const ttl = 3600'] }] }, text: 'ok' }
     if (call.tool === 'Write') return { result: { type: 'create', content: 'a', structuredPatch: [] }, text: 'ok' }
     if (call.tool === 'Grep') return { result: { filenames: [`${ROOT}/src/auth.ts`, `${ROOT}/src/token.ts`, `${ROOT}/api/client.ts`] }, text: '' }
     return { result: {}, text: 'ok' }
   })
-  return { clock, gone }
+  return { clock, gone, failing, aborting, held }
 }
+
+const call = ($: Engine, input: Record<string, unknown>) => $.tool.call(input as Parameters<Engine['tool']['call']>[0])
+
+const edit = ($: Engine, id: string, file = `${ROOT}/src/token.ts`) => call($, { tool: 'Edit', tool_use_id: id, file_path: file, old_string: 'a', new_string: 'b' })
 
 const pane = ($: Engine) =>
   $.ui.mount({
@@ -113,6 +124,18 @@ test('an untracked file counts all its lines as new', async ($, on) => {
   expect(await colorOf(view, '  token.ts')).toBe('#50d550')
 })
 
+test("an edit to Claude's memory never reaches the pane", async ($, on) => {
+  const { clock } = stage(on)
+  await $.command.run(OPEN)
+  const view = await pane($)
+  await $.tool.call({ tool: 'Edit', file_path: '/home/me/.claude/projects/x/memory/fact.md', old_string: 'a', new_string: 'b' })
+  await $.tool.call({ tool: 'Edit', file_path: `${ROOT}/src/token.ts`, old_string: 'a', new_string: 'b' })
+  await clock.advance(60 * 40)
+  const text = await textOf(view)
+  expect(text).toContain('token.ts')
+  expect(text).not.toContain('fact.md')
+})
+
 test('every edited file stays in the tree, not only the last few', async ($, on) => {
   const { clock } = stage(on)
   await $.command.run(OPEN)
@@ -175,29 +198,95 @@ test('each agent gets its own section, labelled with its brief', async ($, on) =
   await $.command.run(OPEN)
   const view = await pane($)
   await $.tool.call({ tool: 'Edit', file_path: `${ROOT}/src/token.ts`, old_string: 'a', new_string: 'b' })
-  await $.tool.call({ tool: 'Edit', file_path: `${ROOT}/src/auth.ts`, old_string: 'a', new_string: 'b', agentId: 'agent-42' } as never)
+  await call($, { tool: 'Edit', file_path: `${ROOT}/src/auth.ts`, old_string: 'a', new_string: 'b', agentId: 'agent-42' })
   await clock.advance(60 * 40)
   const text = await textOf(view)
   expect(text.indexOf('Claude')).toBeGreaterThanOrEqual(0)
   expect(text.indexOf('Claude')).toBeLessThan(text.indexOf('agent: Refactor auth'))
 })
 
+
+type RowProps = { output?: unknown; isRunning?: boolean; file?: string }
+
+const row = ($: Engine, id: string, { output = { structuredPatch: [{ lines: ['-a', '+b'] }] }, isRunning = false, file = `${ROOT}/src/token.ts` }: RowProps = {}) =>
+  $.ui.mount({
+    plugin: 'ripple', surface: 'terminal', component: 'ToolUse',
+    props: { tool_use_id: id, tool: 'Edit', input: { file_path: file }, output, isRunning, isErrored: false, isInterrupted: false },
+  })
+
+const lineOf = async (mounted: Awaited<ReturnType<typeof row>>) => (await mounted.findAll({ type: 'Text' }))[0]?.text ?? null
+
 test('an edit collapses to one line in the conversation, with its counts', async ($, on) => {
   stage(on)
-  on('ui.render', () => ({ type: 'engine' as const, ref: 0 }))
-  const row = await $.ui.mount({
-    plugin: 'ripple', surface: 'terminal', component: 'ToolUse',
-    props: { tool_use_id: 'toolu_1', tool: 'Edit', input: { file_path: `${ROOT}/src/token.ts` }, output: { structuredPatch: [{ lines: ['-a', '+b', '+c'] }] }, isRunning: false, isErrored: false, isInterrupted: false },
-  })
-  const text = (await row.findAll({ type: 'Text' })).map(found => found.text).join('|')
-  expect(text).toContain('Edit(src/token.ts)')
-  expect(text).toContain('+2')
-  expect(text).toContain('-1')
+  expect(await lineOf(await row($, 'toolu_1', { output: { structuredPatch: [{ lines: ['-a', '+b', '+c'] }] } }))).toBe('● Edit  src/token.ts  +2 -1')
+})
+
+test('edits in a row on one file fold into the last row, with the counts summed', async ($, on) => {
+  stage(on)
+  await edit($, 'e1')
+  await edit($, 'e2')
+  await edit($, 'e3')
+  expect(await lineOf(await row($, 'e1'))).toBeNull()
+  expect(await lineOf(await row($, 'e2'))).toBeNull()
+  expect(await lineOf(await row($, 'e3'))).toBe('● Edit  src/token.ts  +3 -3 x3')
+})
+
+test('an edit joining a run shows the run counts at once, not a pending line', async ($, on) => {
+  const { clock, held } = stage(on)
+  await edit($, 'e1')
+  expect(await lineOf(await row($, 'e2', { output: null, isRunning: true }))).toBeNull()
+  let release = () => {}
+  held.set('e2', new Promise(resolve => (release = resolve)))
+  const running = edit($, 'e2')
+  await clock.advance(1)
+  expect(await lineOf(await row($, 'e2', { output: null, isRunning: true }))).toBe('● Edit  src/token.ts  +1 -1 x2')
+  expect(await lineOf(await row($, 'e1'))).toBeNull()
+  release()
+  await running
+  expect(await lineOf(await row($, 'e2'))).toBe('● Edit  src/token.ts  +2 -2 x2')
+})
+
+test('another call in between starts a new run', async ($, on) => {
+  stage(on)
+  await edit($, 'e1')
+  await call($, { tool: 'Read', tool_use_id: 'r1', file_path: `${ROOT}/src/token.ts` })
+  await edit($, 'e2')
+  await edit($, 'e3', `${ROOT}/src/auth.ts`)
+  expect(await lineOf(await row($, 'e1'))).toBe('● Edit  src/token.ts  +1 -1')
+  expect(await lineOf(await row($, 'e2'))).toBe('● Edit  src/token.ts  +1 -1')
+})
+
+test("ripple's own search with the pane open does not break a run", async ($, on) => {
+  const { clock } = stage(on)
+  await $.command.run(OPEN)
+  await pane($)
+  await edit($, 'e1')
+  await clock.advance(60 * 40)
+  await edit($, 'e2')
+  expect(await lineOf(await row($, 'e2'))).toBe('● Edit  src/token.ts  +2 -2 x2')
+})
+
+test('a failed or aborted edit leaves the run, the one before shows again', async ($, on) => {
+  const { failing, aborting } = stage(on)
+  failing.add('e2')
+  aborting.add('e4')
+  await edit($, 'e1')
+  await edit($, 'e2')
+  expect(await lineOf(await row($, 'e1'))).toBe('● Edit  src/token.ts  +1 -1')
+  await edit($, 'e3')
+  await edit($, 'e4').catch(() => undefined)
+  expect(await lineOf(await row($, 'e3'))).toBe('● Edit  src/token.ts  +1 -1')
+})
+
+test('an edit still running is already one line, so the diff never flashes', async ($, on) => {
+  stage(on)
+  const running = await row($, 'toolu_4', { output: null, isRunning: true })
+  expect(await lineOf(running)).toBe('● Edit  src/token.ts  …')
+  expect(await running.findAll({ type: 'engine' })).toEqual([])
 })
 
 test('the diff under a collapsed edit is hidden, a sensitive file keeps it', async ($, on) => {
   stage(on)
-  on('ui.render', () => ({ type: 'engine' as const, ref: 0 }))
   const ok = await $.ui.mount({
     plugin: 'ripple', surface: 'terminal', component: 'ToolResult',
     props: { tool_use_id: 'toolu_2', tool: 'Edit', output: { filePath: `${ROOT}/src/token.ts`, structuredPatch: [] }, isErrored: false },

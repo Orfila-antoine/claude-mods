@@ -1,12 +1,14 @@
-import { atom, read, update } from 'claude-code'
+import { atom, memberOf, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { Ripple } from '../types'
-import { editColor, editStats, foundIn, isRemoval, isSensitive, relativeTo, shortPath, toSlash, treeLines } from './logic'
+import type { Fold, Last, Ripple } from '../types'
+import { ADDED, REMOVED, editColor, editStats, foundIn, isHousekeeping, isRemoval, isSensitive, relativeTo, shortPath, toSlash, treeLines } from './logic'
 
 const edits = atom({ plugin: 'ripple', key: 'edits' } as const, [], { shape: 'ripple-v3' })
 const wave = atom({ plugin: 'ripple', key: 'wave' } as const, null)
 const isOpen = atom({ plugin: 'ripple', key: 'isOpen' } as const, false)
+const last = atom({ plugin: 'ripple', key: 'last' } as const, {}, { shape: 'ripple-last-v1' })
+const fold = atom({ plugin: 'ripple', key: 'fold' } as const, null, { shape: 'ripple-fold-v1' })
 
 const PANE = 'ripple'
 const WAVE_FRAMES = 33
@@ -142,34 +144,71 @@ export const register: Register = on => {
   })
 
   on('tool.call', async ($, e, next) => {
-    const ran = await next(e)
-    if ('deny' in ran && ran.deny) return ran
+    const agent = e.agentId ?? MAIN
+    const id = e.tool_use_id
     const file = 'file_path' in e ? e.file_path : undefined
-    if (EDIT_TOOLS.has(e.tool) && typeof file === 'string' && !ran.isError) {
-      $.clock.after(0, () => void track($, e.tool_use_id, file, ran.result, e.agentId ?? MAIN).catch(() => undefined))
+    const joins = collapsible(e.tool, file, false)
+    const path = joins ? toSlash(file) : ''
+    const before = (await read($, last))[agent] ?? null
+    const continues = joins && before !== null && before.file === path
+    if (continues) {
+      await update($, memberOf(fold, { requestId: id }), () => ({ times: before.times + 1, added: before.added, removed: before.removed }))
+      await update($, memberOf(fold, { requestId: before.id }), (): Fold => 'hidden')
     }
-    const command = 'command' in e ? e.command : undefined
-    if (SHELL_TOOLS.has(e.tool) && typeof command === 'string' && !ran.isError && isRemoval(command)) {
-      const list = await read($, edits)
-      const missing = new Set<string>()
-      for (const one of list) if (!one.isGone && !(await $.fs.exists(one.path))) missing.add(one.id)
-      if (missing.size > 0) await update($, edits, current => current.map(one => (missing.has(one.id) ? { ...one, isGone: true } : one)))
+    let done: Last | null = null
+    try {
+      const ran = await next(e)
+      const isDenied = 'deny' in ran && ran.deny
+      if (joins && !isDenied && !ran.isError) {
+        const stats = editStats(ran.result)
+        done = continues
+          ? { id, file: path, times: before.times + 1, added: before.added + stats.added, removed: before.removed + stats.removed }
+          : { id, file: path, times: 1, ...stats }
+      }
+      if (isDenied) return ran
+      if (EDIT_TOOLS.has(e.tool) && typeof file === 'string' && !ran.isError && !isHousekeeping(file)) {
+        $.clock.after(0, () => void track($, id, file, ran.result, agent).catch(() => undefined))
+      }
+      const command = 'command' in e ? e.command : undefined
+      if (SHELL_TOOLS.has(e.tool) && typeof command === 'string' && !ran.isError && isRemoval(command)) {
+        const list = await read($, edits)
+        const exists = await Promise.all(list.map(one => (one.isGone ? true : $.fs.exists(one.path))))
+        const missing = new Set(list.filter((_, k) => !exists[k]).map(one => one.id))
+        if (missing.size > 0) await update($, edits, current => current.map(one => (missing.has(one.id) ? { ...one, isGone: true } : one)))
+      }
+      return ran
+    } finally {
+      if (continues && !done) {
+        await update($, memberOf(fold, { requestId: before.id }), () => (before.times > 1 ? before : null))
+        await update($, memberOf(fold, { requestId: id }), () => null)
+      }
+      if (done?.times && done.times > 1) await update($, memberOf(fold, { requestId: id }), () => done)
+      if (done || before) await update($, last, all => ({ ...all, [agent]: done }))
     }
-    return ran
   })
 
   on('ui.render', { component: 'ToolUse' }, async ($, e, next) => {
     const { tool, input, output, isRunning, isErrored, isInterrupted } = e.props
     const file = (input as { file_path?: unknown } | null)?.file_path
-    if (!collapsible(tool, file, isRunning || isErrored || isInterrupted)) return next(e)
-    const { added, removed } = editStats(output)
-    const { Text } = $.ui.resolve(e)
+    if (!collapsible(tool, file, isErrored || isInterrupted)) return next(e)
+    const folded = await read($, memberOf(fold, { requestId: e.props.tool_use_id }))
+    const { Box, Text } = $.ui.resolve(e)
+    if (folded === 'hidden') return <Box />
+    if (!folded && isRunning && Object.values(await read($, last)).some(one => one?.file === toSlash(file))) return <Box />
+    const stats = folded ?? editStats(output)
+    const times = folded?.times ?? 1
+    const isPending = isRunning && !folded
+    const path = shortPath(file)
+    const cut = path.lastIndexOf('/') + 1
     return (
       <Text>
-        <Text color="green">● </Text>
-        <Text>{tool}({shortPath(file)})</Text>
-        <Text color="green"> +{added}</Text>
-        <Text color="red"> -{removed}</Text>
+        <Text color={isPending ? undefined : editColor(stats)} dimColor={isPending}>● </Text>
+        <Text dimColor>{`${tool}  ${path.slice(0, cut)}`}</Text>
+        <Text bold={!isPending} dimColor={isPending}>{path.slice(cut)}</Text>
+        {!isPending && <Text color={ADDED}>{`  +${stats.added}`}</Text>}
+        {!isPending && <Text color={REMOVED}>{` -${stats.removed}`}</Text>}
+        {times > 1 && <Text bold>{` x${times}`}</Text>}
+        {isPending && <Text dimColor>  …</Text>}
       </Text>
     )
   })
@@ -220,8 +259,8 @@ export const register: Register = on => {
                   return (
                     <Text key={key}>
                       <Text color={editColor(edit.one)} bold={edit.rank === 0 && !isGone}>{`${indent}${line.name}`}</Text>
-                      <Text color={isGone ? 'gray' : 'green'}> +{edit.one.added}</Text>
-                      <Text color={isGone ? 'gray' : 'red'}> -{edit.one.removed}</Text>
+                      <Text color={isGone ? 'gray' : ADDED}> +{edit.one.added}</Text>
+                      <Text color={isGone ? 'gray' : REMOVED}> -{edit.one.removed}</Text>
                       {edit.one.times > 1 && <Text bold={!isGone} color={isGone ? 'gray' : undefined}> x{edit.one.times}</Text>}
                     </Text>
                   )

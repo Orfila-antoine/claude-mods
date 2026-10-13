@@ -7,6 +7,10 @@ export const toSlash = (path: string) => path.replaceAll('\\', '/')
 
 export const isSensitive = (path: string) => SENSITIVE.test(toSlash(path))
 
+const HOUSEKEEPING = /(^|\/)\.claude\/(projects|plans|jobs|todos|memory|dev-mods|plugins)\/|(^|\/)MEMORY\.md$/i
+
+export const isHousekeeping = (path: string) => HOUSEKEEPING.test(toSlash(path))
+
 export const shortPath = (path: string) => toSlash(path).split('/').slice(-2).join('/')
 
 const stats = new WeakMap<object, { added: number; removed: number; isNew: boolean }>()
@@ -40,6 +44,9 @@ const hueToHex = (hue: number) =>
         .padStart(2, '0')
     })
     .join('')}`
+
+export const ADDED = hueToHex(120)
+export const REMOVED = hueToHex(0)
 
 export function editColor(edit: { added: number; removed: number; isNew?: boolean; isGone?: boolean }) {
   if (edit.isGone) return 'gray'
