@@ -12,6 +12,7 @@ const fold = atom({ plugin: 'ripple', key: 'fold' } as const, null, { shape: 'ri
 const runs = atom({ plugin: 'ripple', key: 'runs' } as const, null, { shape: 'ripple-runs-v2' })
 
 const PANE = 'ripple'
+const OPEN_KEY = 'isOpen'
 const WAVE_FRAMES = 33
 const WAVE_MS = 120
 const GREP_DELAY_MS = 300
@@ -135,18 +136,26 @@ const collapsible = (tool: string, file: unknown, isBroken: boolean): file is st
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({ name: 'ripple', description: 'Show the files Claude and its agents edit, and the files that use them' }).catch(() => undefined)
-    if (await read($, isOpen)) void $.ui.open({ id: PANE, title: 'Ripple' }).catch(() => undefined)
+    const wasOpen = (await read($, isOpen)) || (await $.store.get(OPEN_KEY).catch(() => undefined)) === true
+    if (wasOpen) {
+      await update($, isOpen, () => true)
+      void $.ui.open({ id: PANE, title: 'Ripple' }).catch(() => undefined)
+    }
     return next(e)
   })
 
   on('command.run', { command: 'ripple' }, async $ => {
     await update($, isOpen, () => true)
+    await $.store.set(OPEN_KEY, true)
     await $.ui.open({ id: PANE, title: 'Ripple' })
     return { text: 'Ripple opened: the next edits show their dependents.' }
   })
 
   on('ui.close', async ($, e, next) => {
-    if (e.id === PANE && e.origin.kind !== 'unload') await update($, isOpen, () => false)
+    if (e.id === PANE && e.origin.kind !== 'unload') {
+      await update($, isOpen, () => false)
+      await $.store.set(OPEN_KEY, false)
+    }
     return next(e)
   })
 

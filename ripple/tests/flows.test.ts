@@ -6,8 +6,9 @@ const SESSION = '/work'
 const ROOT = '/work/repo'
 const OPEN = { command: 'ripple', args: '', origin: { kind: 'composer' as const }, presentation: { isFullscreen: false, columns: 120 } }
 
-function stage(on: On, session = SESSION) {
+function stage(on: On, session = SESSION, stored: Record<string, unknown> = {}) {
   const clock = mock.clock(on)
+  mock.store(on, stored)
   const gone = new Set<string>()
   const failing = new Set<string>()
   const aborting = new Set<string>()
@@ -58,6 +59,16 @@ test('with /ripple open, an edit shows the tree of the files that use it', async
   expect(text).toContain('  auth.ts')
   expect(text).toContain('api/')
   expect(text).toContain('  client.ts')
+})
+
+test('a pane left open in an earlier session reopens and tracks edits without /ripple', async ($, on) => {
+  on('session.start', ($, e) => e)
+  const { clock } = stage(on, SESSION, { isOpen: true })
+  await $.session.start({ cwd: SESSION, surface: 'terminal', isInteractive: true })
+  const view = await pane($)
+  await edit($, 'e-reopen')
+  await clock.advance(60 * 40)
+  expect(await textOf(view)).toContain('  token.ts')
 })
 
 test('dependents are found when the session is the repo itself', async ($, on) => {
