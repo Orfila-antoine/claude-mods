@@ -1,6 +1,6 @@
 {
   "name": "wipe",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Screen wipes for /clear and /new: black hole, fall, dust, fade, tv; /wipe <effect> plays one without clearing",
   "author": { "name": "Antoine Orfila" },
   "license": "MIT",

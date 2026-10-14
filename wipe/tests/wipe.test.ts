@@ -74,23 +74,28 @@ test('/wipe with an unknown name still plays one of the effects', async ($, on) 
   expect(EFFECT_NAMES).toContain(text?.split(' ')[0])
 })
 
-test('/clear plays a wipe in the chat row and the pane, then clears', async ($, on) => {
+test('/clear plays a wipe in the chat row and the pane, then clears without the chat coming back', async ($, on) => {
   const clock = stage(on)
   let cleared = false
-  on('command.run', () => {
+  let isHeldAtClear = false
+  let chat: Awaited<ReturnType<typeof output>> | undefined
+  on('command.run', async () => {
     cleared = true
+    isHeldAtClear = (await chat?.findAll({ key: 'wipe-chat' }))?.length === 1
     return { text: '' }
   })
   on('ui.render', () => ({ type: 'engine' as const, ref: 0 }))
   const { text } = await $.command.run(run('clear'))
   await clock.advance(100)
-  const chat = await output($, text ?? '', 'clear')
+  chat = await output($, text ?? '', 'clear')
   const side = await pane($)
   expect(await chat.findAll({ key: 'wipe-chat' })).toHaveLength(1)
   expect(await side.findAll({ key: 'wipe' })).toHaveLength(1)
   expect(cleared).toBe(false)
   await clock.advance(5000)
   expect(cleared).toBe(true)
+  expect(isHeldAtClear).toBe(true)
+  expect(await chat.findAll({ key: 'wipe-chat' })).toEqual([])
 })
 
 test('a /new another mod runs plays in the pane and clears before it resolves', async ($, on) => {

@@ -25,7 +25,7 @@ const screenOf = (viewport: { columns: number; rows: number } | undefined) => {
   return { columns, rows, chatRows: rows - BELOW_CHAT_ROWS }
 }
 
-async function play($: EngineInterface, effect: string, label: string) {
+async function play($: EngineInterface, effect: string, label: string, holdsLastFrame = false) {
   const rows = await $.session.messages().catch(() => [])
   const text = screenText(rows.slice(-SOURCE_MESSAGES)).slice(-SOURCE_CHARS)
   await update($, scene, () => ({ progress: 0, text, label, effect }))
@@ -36,7 +36,7 @@ async function play($: EngineInterface, effect: string, label: string) {
     await $.clock.sleep(FRAME_MS)
   }
   await $.ui.close({ id: PANE }).catch(() => undefined)
-  await update($, scene, () => null)
+  if (!holdsLastFrame) await update($, scene, () => null)
 }
 
 async function pick($: EngineInterface, asked: string) {
@@ -64,8 +64,10 @@ export const register: Register = on => {
     }
     const label = `${effect} #${(await $.clock.now()) % 100000}`
     $.clock.after(0, async () => {
-      await play($, effect, label).catch(() => undefined)
-      if (clears) await $.command.run({ command: e.command, args: e.args }).catch(() => undefined)
+      await play($, effect, label, clears).catch(() => undefined)
+      if (!clears) return
+      await $.command.run({ command: e.command, args: e.args }).catch(() => undefined)
+      await update($, scene, () => null).catch(() => undefined)
     })
     return { text: label }
   })

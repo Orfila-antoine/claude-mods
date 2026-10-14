@@ -287,7 +287,14 @@ export const register: Register = on => {
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Text } = $.ui.resolve(e)
     const [list, current] = await Promise.all([read($, edits), read($, wave)])
-    if (list.length === 0) return <Text dimColor>Edit a file: its dependents show here, one section per agent.</Text>
+    if (list.length === 0) {
+      return (
+        <Box flexDirection="column">
+          <Text>No edits since this pane opened.</Text>
+          <Text dimColor>Each file Claude or an agent edits shows up here with its +/- lines, then the files that use it.</Text>
+        </Box>
+      )
+    }
     return (
       <Box flexDirection="column">
         {sections(list).map(({ latest, older }) => {
