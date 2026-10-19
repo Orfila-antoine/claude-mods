@@ -71,6 +71,16 @@ test('a pane left open in an earlier session reopens and tracks edits without /r
   expect(await textOf(view)).toContain('  token.ts')
 })
 
+test('an open pane keeps tracking edits after /clear', async ($, on) => {
+  on('classic.SessionStart', () => ({}))
+  const { clock } = stage(on, SESSION, { isOpen: true })
+  await $.classic.SessionStart({ source: 'clear' })
+  const view = await pane($)
+  await edit($, 'e-clear')
+  await clock.advance(60 * 40)
+  expect(await textOf(view)).toContain('  token.ts')
+})
+
 test('dependents are found when the session is the repo itself', async ($, on) => {
   const { clock } = stage(on, ROOT)
   await $.command.run(OPEN)

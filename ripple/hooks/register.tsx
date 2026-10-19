@@ -133,14 +133,22 @@ type ShellOutput = {
 const collapsible = (tool: string, file: unknown, isBroken: boolean): file is string =>
   EDIT_TOOLS.has(tool) && !isBroken && typeof file === 'string' && !isSensitive(file)
 
+async function reopen($: EngineInterface) {
+  const wasOpen = (await read($, isOpen)) || (await $.store.get(OPEN_KEY).catch(() => undefined)) === true
+  if (!wasOpen) return
+  await update($, isOpen, () => true)
+  void $.ui.open({ id: PANE, title: 'Ripple' }).catch(() => undefined)
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({ name: 'ripple', description: 'Show the files Claude and its agents edit, and the files that use them' }).catch(() => undefined)
-    const wasOpen = (await read($, isOpen)) || (await $.store.get(OPEN_KEY).catch(() => undefined)) === true
-    if (wasOpen) {
-      await update($, isOpen, () => true)
-      void $.ui.open({ id: PANE, title: 'Ripple' }).catch(() => undefined)
-    }
+    await reopen($)
+    return next(e)
+  })
+
+  on('classic.SessionStart', async ($, e, next) => {
+    if (e.source === 'clear') await reopen($)
     return next(e)
   })
 
