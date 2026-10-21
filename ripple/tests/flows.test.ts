@@ -71,10 +71,8 @@ test('a pane left open in an earlier session reopens and tracks edits without /r
   expect(await textOf(view)).toContain('  token.ts')
 })
 
-test('an open pane keeps tracking edits after /clear', async ($, on) => {
-  on('classic.SessionStart', () => ({}))
+test('an open pane keeps tracking edits after /clear, with no start event to reopen it', async ($, on) => {
   const { clock } = stage(on, SESSION, { isOpen: true })
-  await $.classic.SessionStart({ source: 'clear' })
   const view = await pane($)
   await edit($, 'e-clear')
   await clock.advance(60 * 40)

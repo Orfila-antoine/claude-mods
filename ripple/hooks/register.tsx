@@ -87,7 +87,7 @@ async function labelOf($: EngineInterface, agent: string) {
 }
 
 async function track($: EngineInterface, id: string, file: string, output: unknown, agent: string) {
-  if (!(await read($, isOpen))) return
+  if (!(await isTracking($))) return
   const root = await projectOf($, file)
   const entry: Ripple = {
     id,
@@ -133,6 +133,13 @@ type ShellOutput = {
 const collapsible = (tool: string, file: unknown, isBroken: boolean): file is string =>
   EDIT_TOOLS.has(tool) && !isBroken && typeof file === 'string' && !isSensitive(file)
 
+async function isTracking($: EngineInterface) {
+  if (await read($, isOpen)) return true
+  if ((await $.store.get(OPEN_KEY).catch(() => undefined)) !== true) return false
+  await update($, isOpen, () => true)
+  return true
+}
+
 async function reopen($: EngineInterface) {
   const wasOpen = (await read($, isOpen)) || (await $.store.get(OPEN_KEY).catch(() => undefined)) === true
   if (!wasOpen) return
@@ -144,11 +151,6 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({ name: 'ripple', description: 'Show the files Claude and its agents edit, and the files that use them' }).catch(() => undefined)
     await reopen($)
-    return next(e)
-  })
-
-  on('classic.SessionStart', async ($, e, next) => {
-    if (e.source === 'clear') await reopen($)
     return next(e)
   })
 
