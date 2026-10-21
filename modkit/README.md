@@ -44,6 +44,22 @@ export const register: Register = (on, options) => defineMods(on, options, { plu
 
 `plugin` is your plugin.json `name`. Mods run in the order of `mods`, their steps in the order of their arrays.
 
+## In a mod that keeps its own hooks
+
+A mod with its own `on(...)` hooks (they keep `$`) uses the kit à la carte:
+
+```tsx
+const KIT: Kit = { plugin: 'my-plugin', mods: [hello] }
+
+on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => band($, e, await next(e), KIT))
+on('turn.complete', async ($, e, next) => {
+  await modFx($, KIT, 'hello').setState<{ count: number }>(s => ({ count: (s?.count ?? 0) + 1 }))
+  return next(e)
+})
+```
+
+`band` draws the layers, `modFx` gives a hook the same `fx` the layers read from. A button whose action needs `$` gets `onPress={() => undefined}` and is handled by key in the mod's own `ui.press` hook, after `await next(e)`. Hook an event either through `defineMods` or yourself, never both: the engine refuses two hooks on one event without a matcher.
+
 ## Pipeline
 
 Events: `session` (`{ reason: 'load' | 'clear' }`: `load` each time the plugin loads, which a reload or a worker respawn repeats within a session; `clear` on `/clear`), `prompt.submit`, `turn.complete` (main loop only, unless the mod sets `agents: true`), `command.run` (commands listed in `commands` are registered at each load).
@@ -62,10 +78,11 @@ What no step consumes reaches the engine as it came. A step that throws is logge
 
 ## Layers
 
-Layers draw in the band above the prompt.
+Layers draw in the band above the prompt. Element layers draw on every surface; grid layers on the terminal only.
 
 - `grid(view)` returns a cell grid (`grid`, `text`, `label`, `bar`, `spinner`, `composite`). Only grid layers animate and transition.
 - `node(view)` returns elements from `view.ui` (`Box`, `Text`, `Button`, `actions(ui, list)`), redrawn on state changes only.
+- `rows` is a number or `({ state, columns, maxRows, isWorking }) => number`; `visible(state, room)` gets the same room.
 - `z` orders them, highest on top; equal `z` keeps registration order. When `maxRows` runs out, the lowest go first, never cut in half.
 - Grid layers with the same `slot` are composited into one raster, higher `z` painted over lower; blank cells are transparent.
 - `cover: true` takes the whole band (the highest cover wins).

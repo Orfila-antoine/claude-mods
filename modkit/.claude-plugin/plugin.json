@@ -1,6 +1,6 @@
 {
   "name": "modkit",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A kit for Claude Code mods: an ordered middleware pipeline, terminal layers and smooth transitions; this plugin is its runnable example",
   "author": { "name": "Antoine Orfila" },
   "license": "MIT",

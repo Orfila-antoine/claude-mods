@@ -9,6 +9,8 @@ import type {
   PluginOptions,
   PromptSubmitInput,
   PromptSubmitResult,
+  RenderElement,
+  RenderInput,
   RenderNode,
   TurnCompleteInput,
   TurnCompleteResult,
@@ -29,7 +31,7 @@ export * from './layers'
 export * from './motion'
 export * from './pipeline'
 
-export const VERSION = '0.1.0'
+export const VERSION = '0.2.0'
 
 export type Fx = {
   plugin: string
@@ -54,11 +56,12 @@ export type KitEvent = keyof Events
 export type ModStep<E extends KitEvent> = Step<Events[E][0], Events[E][1], Ctx>
 
 export type View<S> = { columns: number; rows: number; now: number; since: number; state: S | undefined; fx: Fx }
+export type Room<S> = { state: S | undefined; columns: number; maxRows: number; isWorking: boolean }
 type LayerBase<S> = {
   id: string
   z: number
-  rows: number
-  visible?(state: S | undefined): boolean
+  rows: number | ((room: Room<S>) => number)
+  visible?(state: S | undefined, room: Room<S>): boolean
 }
 export type GridLayer<S> = LayerBase<S> & {
   slot?: string
@@ -68,7 +71,7 @@ export type GridLayer<S> = LayerBase<S> & {
   exit?: Transition
   grid(view: View<S>): Grid
 }
-export type NodeLayer<S> = LayerBase<S> & { node(view: View<S> & { ui: ElementTable<'terminal'> }): RenderNode }
+export type NodeLayer<S> = LayerBase<S> & { node(view: View<S> & { ui: ElementTable<'terminal'>; surface: string; isWorking: boolean }): RenderNode }
 export type Layer<S = JsonValue> = GridLayer<S> | NodeLayer<S>
 
 export type Mod<S extends JsonValue = JsonValue> = {
@@ -95,11 +98,21 @@ type Runtime = {
 }
 
 const FRAME_MS = 33
+const RUNTIMES = new Map<string, Runtime>()
 const TICKERS = globalThis as { modkitTickers?: Record<string, { cancel: () => void } | undefined> }
 
 const isGrid = (layer: Layer<any>): layer is GridLayer<any> => 'grid' in layer
 const storeKey = (mod: string) => `modkit:${mod}`
 const reason = (error: unknown) => (error instanceof Error ? error.message : String(error))
+
+function runtimeOf(plugin: string) {
+  let runtime = RUNTIMES.get(plugin)
+  if (!runtime) {
+    runtime = { session: null, cache: new Map(), phases: new Map(), faults: new Map(), band: null, isStale: false, ticker: null }
+    RUNTIMES.set(plugin, runtime)
+  }
+  return runtime
+}
 
 function fxOf($: EngineInterface, plugin: string, mod: string, runtime: Runtime): Fx {
   return {
@@ -124,6 +137,10 @@ function fxOf($: EngineInterface, plugin: string, mod: string, runtime: Runtime)
       fill: async (text, mode = 'replace') => (await $.prompt.fill({ text, mode })).isFilled,
     },
   }
+}
+
+export function modFx($: EngineInterface, kit: Kit, mod: string): Fx {
+  return fxOf($, kit.plugin, mod, runtimeOf(kit.plugin))
 }
 
 function faultOf($: EngineInterface, plugin: string, event: string) {
@@ -227,7 +244,7 @@ function tick($: EngineInterface, kit: Kit, runtime: Runtime) {
     for (const slot of band.slots) {
       const cells = encode(paint($, kit, runtime, slot.members, band.columns, slot.rows, now))
       if (cells !== slot.last) {
-        const blitted = await $.ui.blit({ requestId: band.requestId, key: slot.raster, cells })
+        const blitted = await $.ui.blit({ requestId: band.requestId, key: slot.raster, cells }).catch((error: unknown) => ({ deny: reason(error) }))
         if ('deny' in blitted && blitted.deny) {
           runtime.isStale = true
           $.ui.invalidate('ui.render')
@@ -248,6 +265,86 @@ function tick($: EngineInterface, kit: Kit, runtime: Runtime) {
   tickers[kit.plugin] = ticker
 }
 
+const livesOf = (mods: readonly Mod<any>[]): Live[] =>
+  mods.flatMap((mod, order) => (mod.layers ?? []).map(layer => ({ mod, layer, order, key: `${mod.id}/${layer.id}` })))
+
+export async function band($: EngineInterface, e: RenderInput<'AbovePrompt'>, below: RenderElement, kit: Kit): Promise<RenderElement> {
+  if (e.props.hasSurvey) return below
+  const runtime = runtimeOf(kit.plugin)
+  const isTerminal = e.surface === 'terminal'
+  const ui = $.ui.resolve(e) as unknown as ElementTable<'terminal'>
+  const { Box, Raster } = ui
+  const now = await $.clock.now()
+  const columns = Math.max(1, Math.floor(e.props.bodyColumns))
+  await load($, runtime, kit.mods)
+
+  const placed: (Placed & { live: Live })[] = []
+  for (const live of livesOf(kit.mods)) {
+    const layer = live.layer
+    if (isGrid(layer) && !isTerminal) continue
+    const room: Room<any> = { state: runtime.cache.get(live.mod.id), columns, maxRows: e.props.maxRows, isWorking: e.props.isWorking }
+    const isVisible = guarded($, kit, runtime, live, 'visible', false, () => layer.visible?.(room.state, room) ?? true)
+    const enter = isGrid(layer) ? layer.enter : undefined
+    const exit = isGrid(layer) ? layer.exit : undefined
+    const before = runtime.phases.get(live.key) ?? { visible: false, since: -Infinity }
+    const phase = flip(before, isVisible, now, enter, exit)
+    runtime.phases.set(live.key, phase)
+    if (!phase.visible && isSettled(phase, now, enter, exit)) continue
+    const sizing = layer.rows
+    const rows = typeof sizing === 'number' ? sizing : guarded($, kit, runtime, live, 'rows', 0, () => sizing(room))
+    const slot = isGrid(layer) ? (layer.slot ?? live.key) : live.key
+    placed.push({ mod: live.mod.id, layer: layer.id, slot, order: live.order, z: layer.z, rows: Math.max(0, Math.floor(rows)), cover: isGrid(layer) && Boolean(layer.cover), live })
+  }
+
+  const slots = plan(placed, e.props.maxRows)
+  const mounted: Mounted[] = []
+  const own = slots.map(slot => {
+    const members = slot.members.map(member => placed.find(one => one.mod === member.mod && one.layer === member.layer)?.live).filter((live): live is Live => Boolean(live))
+    const key = keyOf(slot.z, kit.plugin, slot.slot)
+    const first = members[0]
+    if (first && !isGrid(first.layer)) {
+      const layer = first.layer
+      const view = {
+        columns,
+        rows: slot.rows,
+        now,
+        since: runtime.phases.get(first.key)?.since ?? now,
+        state: runtime.cache.get(first.mod.id),
+        fx: fxOf($, kit.plugin, first.mod.id, runtime),
+        ui,
+        surface: e.surface,
+        isWorking: e.props.isWorking,
+      }
+      const node = guarded($, kit, runtime, first, 'node', null, () => layer.node(view))
+      return (
+        <Box key={key} height={slot.rows} overflow="hidden" flexDirection="column">
+          {node}
+        </Box>
+      )
+    }
+    const raster = `modkit-${kit.plugin}-${slot.slot}`
+    const cells = encode(paint($, kit, runtime, members, columns, slot.rows, now))
+    mounted.push({ key, raster, rows: slot.rows, members, last: cells })
+    return (
+      <Box key={key} height={slot.rows}>
+        <Raster key={raster} columns={columns} rows={slot.rows} cells={cells} />
+      </Box>
+    )
+  })
+
+  if (isTerminal) {
+    runtime.band = { requestId: e.requestId, columns, slots: mounted }
+    runtime.isStale = false
+    if (mounted.some(slot => isMoving(runtime, slot.members, now))) tick($, kit, runtime)
+  }
+  const isCovered = slots.some(slot => slot.members.some(member => member.cover))
+  return (
+    <Box key={STACK} flexDirection="column">
+      {isCovered ? own : merge(own, below)}
+    </Box>
+  )
+}
+
 export function defineMods(on: On, options: PluginOptions, kit: Kit) {
   const seen = new Set<string>()
   for (const mod of kit.mods) {
@@ -255,110 +352,54 @@ export function defineMods(on: On, options: PluginOptions, kit: Kit) {
     seen.add(mod.id)
   }
   const mods = kit.mods.filter(mod => options[mod.id] !== false)
-  const runtime: Runtime = { session: null, cache: new Map(), phases: new Map(), faults: new Map(), band: null, isStale: false, ticker: null }
+  const enabled: Kit = { plugin: kit.plugin, mods }
+  const runtime = runtimeOf(kit.plugin)
   const uses = (event: KitEvent) => mods.some(mod => (mod.on?.[event]?.length ?? 0) > 0)
-  const lives: Live[] = mods.flatMap((mod, order) =>
-    (mod.layers ?? []).map(layer => ({ mod, layer, order, key: `${mod.id}/${layer.id}` })),
-  )
+  const hasLayers = livesOf(mods).length > 0
   const commands = mods.flatMap(mod => mod.commands ?? [])
   const noop = async () => undefined
 
-  on('session.start', async ($, e, next) => {
-    for (const command of commands) {
-      await $.command.register(command).catch(error => $.ui.log(`${kit.plugin}: /${command.name} not registered: ${reason(error)}`))
-    }
-    await dispatch($, kit, runtime, mods, 'session', { reason: 'load' }, noop)
-    return next(e)
-  }).catch(($, e, next) => next(e))
+  if (commands.length > 0 || uses('session')) {
+    on('session.start', async ($, e, next) => {
+      for (const command of commands) {
+        await $.command.register(command).catch(error => $.ui.log(`${kit.plugin}: /${command.name} not registered: ${reason(error)}`))
+      }
+      await dispatch($, enabled, runtime, mods, 'session', { reason: 'load' }, noop)
+      return next(e)
+    }).catch(($, e, next) => next(e))
+  }
 
-  on('session.end', async ($, e, next) => {
-    if (e.reason === 'clear') {
-      stop(kit, runtime)
-      runtime.session = null
-      runtime.cache.clear()
-      runtime.phases.clear()
-      runtime.band = null
-      $.ui.invalidate('ui.render')
-      await dispatch($, kit, runtime, mods, 'session', { reason: 'clear' }, noop)
-    }
-    return next(e)
-  }).catch(($, e, next) => next(e))
+  if (hasLayers || uses('session')) {
+    on('session.end', async ($, e, next) => {
+      if (e.reason === 'clear') {
+        stop(enabled, runtime)
+        runtime.session = null
+        runtime.cache.clear()
+        runtime.phases.clear()
+        runtime.band = null
+        $.ui.invalidate('ui.render')
+        await dispatch($, enabled, runtime, mods, 'session', { reason: 'clear' }, noop)
+      }
+      return next(e)
+    }).catch(($, e, next) => next(e))
+  }
 
   if (uses('prompt.submit')) {
-    on('prompt.submit', async ($, e, next) => dispatch($, kit, runtime, mods, 'prompt.submit', e, msg => next(msg))).catch(($, e, next) => next(e))
+    on('prompt.submit', async ($, e, next) => dispatch($, enabled, runtime, mods, 'prompt.submit', e, msg => next(msg))).catch(($, e, next) => next(e))
   }
 
   if (uses('turn.complete')) {
     on('turn.complete', async ($, e, next) => {
       const heard = e.agentId ? mods.filter(mod => mod.agents) : mods
-      return dispatch($, kit, runtime, heard, 'turn.complete', e, msg => next(msg))
+      return dispatch($, enabled, runtime, heard, 'turn.complete', e, msg => next(msg))
     }).catch(($, e, next) => next(e))
   }
 
   if (uses('command.run')) {
-    on('command.run', async ($, e, next) => dispatch($, kit, runtime, mods, 'command.run', e, msg => next(msg))).catch(($, e, next) => next(e))
+    on('command.run', async ($, e, next) => dispatch($, enabled, runtime, mods, 'command.run', e, msg => next(msg))).catch(($, e, next) => next(e))
   }
 
-  if (lives.length > 0) {
-    on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-      const below = await next(e)
-      if (e.surface !== 'terminal' || e.props.hasSurvey) return below
-      const ui = $.ui.resolve(e)
-      const { Box, Raster } = ui
-      const now = await $.clock.now()
-      const columns = Math.max(1, Math.floor(e.props.bodyColumns))
-      await load($, runtime, mods)
-
-      const placed: (Placed & { live: Live })[] = []
-      for (const live of lives) {
-        const layer = live.layer
-        const state = runtime.cache.get(live.mod.id)
-        const isVisible = guarded($, kit, runtime, live, 'visible', false, () => layer.visible?.(state) ?? true)
-        const enter = isGrid(layer) ? layer.enter : undefined
-        const exit = isGrid(layer) ? layer.exit : undefined
-        const before = runtime.phases.get(live.key) ?? { visible: false, since: -Infinity }
-        const phase = flip(before, isVisible, now, enter, exit)
-        runtime.phases.set(live.key, phase)
-        if (!phase.visible && isSettled(phase, now, enter, exit)) continue
-        const slot = isGrid(layer) ? (layer.slot ?? live.key) : live.key
-        placed.push({ mod: live.mod.id, layer: layer.id, slot, order: live.order, z: layer.z, rows: layer.rows, cover: isGrid(layer) && Boolean(layer.cover), live })
-      }
-
-      const slots = plan(placed, e.props.maxRows)
-      const mounted: Mounted[] = []
-      const own = slots.map(slot => {
-        const members = slot.members.map(member => placed.find(one => one.mod === member.mod && one.layer === member.layer)?.live).filter((live): live is Live => Boolean(live))
-        const key = keyOf(slot.z, kit.plugin, slot.slot)
-        const first = members[0]
-        if (first && !isGrid(first.layer)) {
-          const layer = first.layer
-          const view = { columns, rows: slot.rows, now, since: runtime.phases.get(first.key)?.since ?? now, state: runtime.cache.get(first.mod.id), fx: fxOf($, kit.plugin, first.mod.id, runtime), ui }
-          const node = guarded($, kit, runtime, first, 'node', null, () => layer.node(view))
-          return (
-            <Box key={key} height={slot.rows} overflow="hidden" flexDirection="column">
-              {node}
-            </Box>
-          )
-        }
-        const raster = `modkit-${kit.plugin}-${slot.slot}`
-        const cells = encode(paint($, kit, runtime, members, columns, slot.rows, now))
-        mounted.push({ key, raster, rows: slot.rows, members, last: cells })
-        return (
-          <Box key={key} height={slot.rows}>
-            <Raster key={raster} columns={columns} rows={slot.rows} cells={cells} />
-          </Box>
-        )
-      })
-
-      runtime.band = { requestId: e.requestId, columns, slots: mounted }
-      runtime.isStale = false
-      if (mounted.some(slot => isMoving(runtime, slot.members, now))) tick($, kit, runtime)
-      const isCovered = slots.some(slot => slot.members.some(member => member.cover))
-      return (
-        <Box key={STACK} flexDirection="column">
-          {isCovered ? own : merge(own, below)}
-        </Box>
-      )
-    }).catch(($, e, next) => next(e))
+  if (hasLayers) {
+    on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => band($, e, await next(e), enabled)).catch(($, e, next) => next(e))
   }
 }

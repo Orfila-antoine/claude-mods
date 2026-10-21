@@ -10,13 +10,14 @@ const CLOCK = 'modkit-modkit-clock'
 const stage = (on: On) => {
   const clock = mock.clock(on, { now: 1000 })
   mock.store(on)
-  const seen = { logs: [] as string[], blits: [] as { key: string; cells: string }[], renders: 0, denyNext: false, sessionId: 's1' }
+  const seen = { logs: [] as string[], blits: [] as { key: string; cells: string }[], renders: 0, denyNext: false, blitThrows: false, sessionId: 's1' }
   on('session.id', () => ({ value: seen.sessionId }))
   on('ui.log', ($, e) => {
     seen.logs.push(e.text)
     return { value: undefined }
   })
   on('ui.blit', ($, e) => {
+    if (seen.blitThrows) throw new Error('no surface')
     if (seen.denyNext) {
       seen.denyNext = false
       return { value: { deny: 'another size' } }
@@ -186,4 +187,24 @@ test('a reload of the plugin within the session keeps every mod state', async ($
   await $.session.start({ cwd: '.', surface: 'terminal', isInteractive: true } as never)
   await ui.redraw()
   expect(await ui.find({ type: 'Text', text: /modkit · 1 messages/ })).toBeDefined()
+})
+
+test('on a surface other than the terminal, element layers draw and raster layers stay out', async ($, on) => {
+  stage(on)
+  await submit($, 'go')
+  const ui = await $.ui.mount({ plugin: 'modkit', surface: 'desktop', component: 'AbovePrompt', props: PROPS })
+  expect(await ui.find({ type: 'Text', text: /modkit · 1 messages/ })).toBeDefined()
+  expect(await ui.findAll({ key: CLOCK })).toEqual([])
+})
+
+test('a blit that throws does not leave a layer stuck: it is redrawn and still fades out', async ($, on) => {
+  const { clock, seen } = stage(on)
+  seen.blitThrows = true
+  const ui = await band($)
+  await submit($, 'go')
+  await clock.advance(200)
+  await answer($)
+  await ui.findAll({ key: CLOCK })
+  await clock.advance(1000)
+  expect(await ui.findAll({ key: CLOCK })).toEqual([])
 })
