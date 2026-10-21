@@ -32,6 +32,8 @@ test('the start line prefers the bead in progress', () => {
 
 test('a git push draws the sparks above the band once the turn ends, then they go away', async ($, on) => {
   const clock = mock.clock(on)
+  mock.store(on)
+  on('session.id', () => ({ value: 'session' }))
   on('ui.render', () => ({ type: 'engine' as const, ref: 0 }))
   on('turn.complete', ($, e) => ({ text: e.answer }))
   on('tool.call', () => ({ result: {}, text: 'To github.com:me/x.git\n   af68d1d..9199dfc  main -> main' }))
@@ -40,14 +42,16 @@ test('a git push draws the sparks above the band once the turn ends, then they g
     plugin: 'cues', surface: 'terminal', component: 'AbovePrompt',
     props: { hasSurvey: false, isWorking: true, maxRows: 10, bodyColumns: 100, scroll: { offset: 0, bodyRows: 9 }, view: {} },
   })
-  expect(await band.findAll({ key: 'push-sparks' })).toEqual([])
+  expect(await band.findAll({ key: 'modkit-cues-cues/sparks' })).toEqual([])
   await $.turn.complete({ answer: 'Pushed.', durationMs: 1, isAborted: false, turnId: 't', reason: 'answer' })
-  expect(await band.findAll({ key: 'push-sparks' })).toHaveLength(1)
+  expect(await band.findAll({ key: 'modkit-cues-cues/sparks' })).toHaveLength(1)
   expect(await band.findAll({ type: 'engine' })).toHaveLength(1)
   await clock.advance(60 * 30)
-  expect(await band.findAll({ key: 'push-sparks' })).toHaveLength(1)
+  expect(await band.findAll({ key: 'modkit-cues-cues/sparks' })).toHaveLength(1)
   await clock.advance(60 * 40)
-  expect(await band.findAll({ key: 'push-sparks' })).toEqual([])
+  await band.findAll({ key: 'modkit-cues-cues/sparks' })
+  await clock.advance(400)
+  expect(await band.findAll({ key: 'modkit-cues-cues/sparks' })).toEqual([])
 })
 
 test('the hint line shows the last Next step once the prompt is empty', async ($, on) => {
@@ -60,4 +64,14 @@ test('the hint line shows the last Next step once the prompt is empty', async ($
   await $.turn.complete({ answer: 'Done.\n\nNext: run the gate', durationMs: 1, isAborted: false, turnId: 't', reason: 'answer' })
   await $.ui.mount({ plugin: 'cues', surface: 'terminal', component: 'PromptHint', props: { isDraft: false, isWorking: false, hint: '? for shortcuts' } })
   expect(seen).toContain('next: run the gate')
+})
+
+test('every prompt carries the Next and consequence cues as context, past the guard that drops prompt.compose', async ($, on) => {
+  let context: readonly string[] = []
+  on('prompt.submit', ($, e) => {
+    context = e.context ?? []
+    return { text: e.text, context: e.context }
+  })
+  await $.prompt.submit({ text: 'fix the login', wait: false, origin: { kind: 'composer' } } as never)
+  expect(context.some(block => block.includes('"Next:"') && block.includes('AskUserQuestion'))).toBe(true)
 })

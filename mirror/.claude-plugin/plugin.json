@@ -1,6 +1,6 @@
 {
   "name": "mirror",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Spots a spiral (the same request, the same answer or the same failing tool, three times) and offers to break the loop",
   "author": { "name": "Antoine Orfila" },
   "license": "MIT",

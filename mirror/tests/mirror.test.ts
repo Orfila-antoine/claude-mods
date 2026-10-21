@@ -4,6 +4,8 @@ import type { On, SessionMessage, ToolUseSummary } from 'claude-code'
 
 function stage(on: On, rows: SessionMessage[], draft = '') {
   const clock = mock.clock(on)
+  mock.store(on)
+  on('session.id', () => ({ value: 'session' }))
   const seen = { toasts: [] as string[], filled: [] as { text: string; mode?: string }[] }
   on('session.messages', () => ({ value: rows }))
   on('session.turns', () => ({ value: rows.filter(row => row.role === 'user').length }))

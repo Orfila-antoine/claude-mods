@@ -1,11 +1,8 @@
-import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, SessionMessage } from 'claude-code'
 
 import type { Spiral } from '../types'
-
-const spiral = atom({ plugin: 'mirror', key: 'spiral' } as const, null, { shape: 'mirror-v2' })
-const dismissedAt = atom({ plugin: 'mirror', key: 'dismissedAt' } as const, -1)
-const expandedAt = atom({ plugin: 'mirror', key: 'expandedAt' } as const, -1)
+import { band, modFx } from './modkit'
+import type { Kit, Mod } from './modkit'
 
 const WINDOW = 3
 const ALIKE = 0.6
@@ -86,13 +83,64 @@ function recentRows(rows: SessionMessage[]) {
   return rows
 }
 
+type MirrorState = { spiral: Spiral | null; dismissedAt: number; expandedAt: number }
+
+const EMPTY: MirrorState = { spiral: null, dismissedAt: -1, expandedAt: -1 }
+
+const mirror: Mod<MirrorState> = {
+  id: 'mirror',
+  layers: [
+    {
+      id: 'spiral',
+      z: 20,
+      rows: ({ state }) => (state?.spiral && state.expandedAt === state.spiral.at ? 2 : 1),
+      visible: state => Boolean(state?.spiral && state.spiral.at !== state.dismissedAt),
+      node({ ui, state, fx }) {
+        const { Box, Button, Text } = ui
+        const found = state?.spiral
+        if (!found) return <Box />
+        const isExpanded = state.expandedAt === found.at
+        const dismiss = () => fx.setState<MirrorState>(current => ({ ...EMPTY, ...current, dismissedAt: found.at }))
+        return (
+          <Box flexDirection="column">
+            <Box>
+              <Text color="magenta">🪞 Spiral: {found.reason} </Text>
+              <Button
+                key="break"
+                hotkey="b"
+                label="Break the loop"
+                onPress={async () => {
+                  const draft = (await fx.prompt.read()).trim()
+                  await fx.prompt.fill(draft ? `\n${BREAK}` : BREAK, draft ? 'append' : 'replace')
+                  await dismiss()
+                }}
+              />
+              <Button key="dismiss" hotkey="d" label="Dismiss" onPress={dismiss} />
+              <Button
+                key="why"
+                hotkey="x"
+                label={isExpanded ? '▾ What repeats' : '▸ What repeats'}
+                onPress={() => fx.setState<MirrorState>(current => ({ ...EMPTY, ...current, expandedAt: isExpanded ? -1 : found.at }))}
+              />
+            </Box>
+            {isExpanded && <Text key="detail" dimColor>{`   ${found.detail}`}</Text>}
+          </Box>
+        )
+      },
+    },
+  ],
+}
+
+const KIT: Kit = { plugin: 'mirror', mods: [mirror] }
+
 async function look($: EngineInterface) {
   const [rows, at] = await Promise.all([$.session.messages(), $.session.turns()])
   const seen = spiralOf(turnsOf(recentRows(rows)))
   const found: Spiral | null = seen ? { ...seen, at } : null
-  const before = await read($, spiral)
+  const fx = modFx($, KIT, 'mirror')
+  const before = (await fx.state<MirrorState>())?.spiral ?? null
   if (found?.reason === before?.reason) return
-  await update($, spiral, () => found)
+  await fx.setState<MirrorState>(current => ({ ...EMPTY, ...current, spiral: found }))
   if (found) $.ui.toast(`🪞 ${found.reason}`)
 }
 
@@ -107,41 +155,5 @@ export const register: Register = on => {
     return next(e)
   })
 
-  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    const below = await next(e)
-    if (e.props.hasSurvey) return below
-    const [found, dismissed, expanded] = await Promise.all([read($, spiral), read($, dismissedAt), read($, expandedAt)])
-    if (!found || found.at === dismissed) return below
-
-    const { Box, Button, Text } = $.ui.resolve(e)
-    const dismiss = () => update($, dismissedAt, () => found.at)
-    const isExpanded = expanded === found.at
-
-    return (
-      <Box flexDirection="column">
-        <Box>
-          <Text color="magenta">🪞 Spiral: {found.reason} </Text>
-          <Button
-            key="break"
-            hotkey="b"
-            label="Break the loop"
-            onPress={async () => {
-              const draft = (await $.prompt.read()).text.trim()
-              await $.prompt.fill(draft ? { text: `\n${BREAK}`, mode: 'append' } : { text: BREAK, mode: 'replace' })
-              await dismiss()
-            }}
-          />
-          <Button key="dismiss" hotkey="d" label="Dismiss" onPress={dismiss} />
-          <Button
-            key="why"
-            hotkey="w"
-            label={isExpanded ? '▾ What repeats' : '▸ What repeats'}
-            onPress={() => update($, expandedAt, () => (isExpanded ? -1 : found.at))}
-          />
-        </Box>
-        {isExpanded && <Text key="detail" dimColor>{`   ${found.detail}`}</Text>}
-        {below}
-      </Box>
-    )
-  })
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => band($, e, await next(e), KIT)).catch(($, e, next) => next(e))
 }

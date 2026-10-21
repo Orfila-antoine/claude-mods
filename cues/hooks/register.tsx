@@ -2,10 +2,11 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import { isPush, isoWeek, nextStepOf, pushLabel, startLine, weeksInARow } from './logic'
+import { band, modFx } from './modkit'
+import type { Kit, Mod } from './modkit'
 import { sparks } from './sparks'
 
 const nextStep = atom({ plugin: 'cues', key: 'nextStep' } as const, null)
-const push = atom({ plugin: 'cues', key: 'push' } as const, null)
 const pushed = atom({ plugin: 'cues', key: 'pushed' } as const, null)
 const noticed = atom({ plugin: 'cues', key: 'noticed' } as const, false)
 
@@ -16,18 +17,32 @@ const CUES = [
   'When you call AskUserQuestion, write each option description as its consequence: the files it touches, any migration, the impact on clients.',
 ].join('\n')
 
-let pushTicker: { cancel: () => void } | null = null
+type CuesState = { push: { label: string; at: number } | null; isShown: boolean }
+
+const cues: Mod<CuesState> = {
+  id: 'cues',
+  layers: [
+    {
+      id: 'sparks',
+      z: 30,
+      rows: ({ maxRows }) => Math.max(1, Math.min(3, maxRows)),
+      animated: true,
+      exit: { kind: 'fade', ms: 300 },
+      visible: state => state?.isShown === true,
+      grid: ({ columns, rows, now, since, state }) => sparks(columns, rows, Math.floor((now - since) / SPARK_MS), state?.push?.label ?? ''),
+    },
+  ],
+}
+
+const KIT: Kit = { plugin: 'cues', mods: [cues] }
 
 async function animatePush($: EngineInterface, label: string) {
-  pushTicker?.cancel()
-  await update($, push, () => ({ label, frame: 0 }))
-  let frame = 0
-  const ticker = $.clock.every(SPARK_MS, () => {
-    frame += 1
-    if (frame >= SPARK_FRAMES) ticker.cancel()
-    void update($, push, () => (frame < SPARK_FRAMES ? { label, frame } : null)).catch(() => ticker.cancel())
+  const fx = modFx($, KIT, 'cues')
+  const at = await fx.now()
+  await fx.setState<CuesState>(() => ({ push: { label, at }, isShown: true }))
+  $.clock.after(SPARK_FRAMES * SPARK_MS, () => {
+    void fx.setState<CuesState>(state => (state?.push?.at === at ? { push: state.push, isShown: false } : (state ?? { push: null, isShown: false }))).catch(() => undefined)
   })
-  pushTicker = ticker
 }
 
 async function startNotice($: EngineInterface) {
@@ -52,9 +67,9 @@ export const register: Register = on => {
     return next(e)
   })
 
-  on('prompt.compose', async ($, e, next) => {
-    const composed = await next(e)
-    return { ...composed, sections: [...composed.sections, { id: 'cues:cues', text: CUES, scope: 'session' as const }] }
+  on('prompt.submit', async ($, e, next) => {
+    if (e.command || e.isMeta) return next(e)
+    return next({ ...e, context: [...(e.context ?? []), CUES] })
   })
 
   on('turn.complete', async ($, e, next) => {
@@ -86,18 +101,5 @@ export const register: Register = on => {
     return step ? next({ ...e, props: { ...e.props, hint: `next: ${step}` } }) : next(e)
   })
 
-  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    const current = await read($, push)
-    if (!current || e.props.hasSurvey || e.surface !== 'terminal') return next(e)
-    const { Box, Raster } = $.ui.resolve(e)
-    const columns = Math.min(60, e.props.bodyColumns)
-    const rows = Math.max(1, Math.min(3, e.props.maxRows))
-    const band = await next(e)
-    return (
-      <Box flexDirection="column">
-        <Raster key="push-sparks" columns={columns} rows={rows} cells={sparks(columns, rows, current.frame, current.label)} />
-        {band}
-      </Box>
-    )
-  })
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => band($, e, await next(e), KIT)).catch(($, e, next) => next(e))
 }

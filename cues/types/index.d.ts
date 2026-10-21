@@ -1,11 +1,10 @@
-export type Push = { label: string; frame: number }
+export type Pushed = string | null
 
 declare module 'claude-code' {
   interface PluginState {
     cues: {
       nextStep: string | null
-      push: Push | null
-      pushed: string | null
+      pushed: Pushed
       noticed: boolean
     }
   }

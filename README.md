@@ -112,7 +112,7 @@ Dependents are found with one `Grep` for the file's name inside its git repo, 30
 - The first line of a session reads `Week 3 in a row, rest days are free.` and `Resume: <your bead in progress>` (from `.beads/issues.jsonl` when there is one).
 - A successful `git push` plays eight sparks and `pushed 9199dfc -> main` above the band over the prompt when Claude's turn ends, for 3 s.
 
-`cues` adds two lines to the system prompt (the `Next:` line and the option consequences).
+`cues` attaches two lines to each prompt you send, as context the model reads and you never see (the `Next:` line and the option consequences): Claude Code's built-in guard keeps installed mods out of the system prompt.
 
 ```
 /plugin install cues@claude-mods
@@ -146,7 +146,7 @@ After each turn it looks at the last three exchanges, with no model call: the sa
 🪞 Spiral: The last 3 answers say the same thing.  [Break the loop] [Dismiss] [▸ What repeats]
 ```
 
-`Break the loop` (`b`) puts a prompt in the box that asks Claude to name the assumption that might be wrong and ask one diagnostic question before changing anything. `What repeats` (`w`) unfolds one short line with the repeated words or the last failing call.
+`Break the loop` (`b`) puts a prompt in the box that asks Claude to name the assumption that might be wrong and ask one diagnostic question before changing anything. `What repeats` (`x`) unfolds one short line with the repeated words or the last failing call.
 
 ```
 /plugin install mirror@claude-mods

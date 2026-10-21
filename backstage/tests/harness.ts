@@ -21,6 +21,9 @@ export function stage(
   { percent = 10, draft = '', selection, messages = [], reply = HAIKU, replyDelayMs = 0 }: Options = {},
 ) {
   const clock = mock.clock(on)
+  mock.store(on)
+  on('session.id', () => ({ value: 'session' }))
+  on('ui.render', () => ({ type: 'engine' as const, ref: 0 }))
   const box = { text: draft }
   const seen = {
     filled: [] as string[],

@@ -1,19 +1,36 @@
-import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { Claim } from '../types'
+import type { Claim, Picker } from '../types'
+import { band, grid, modFx, put, text } from './modkit'
+import type { Kit, Mod, Room } from './modkit'
 import { CHALLENGE, IDEAS, PROMPT_TYPES, REFINER, REWRITE_DIRECTION, NEXT_MOVES, SCOUT, SCOUT_TASK, WRITER, fill } from './prompts'
 
-const busy = atom({ plugin: 'backstage', key: 'busy' } as const, null)
-const picker = atom({ plugin: 'backstage', key: 'picker' } as const, null)
-const undo = atom({ plugin: 'backstage', key: 'undo' } as const, null)
-const scoutId = atom({ plugin: 'backstage', key: 'scoutId' } as const, null)
-const contextPercent = atom({ plugin: 'backstage', key: 'contextPercent' } as const, 0)
-const isHandingOff = atom({ plugin: 'backstage', key: 'isHandingOff' } as const, false)
-const suggestions = atom({ plugin: 'backstage', key: 'suggestions' } as const, [])
-const suggestFrame = atom({ plugin: 'backstage', key: 'suggestFrame' } as const, null)
-const revealFrom = atom({ plugin: 'backstage', key: 'revealFrom' } as const, null)
+type Undo = { draft: string; written: string }
+type BackstageState = {
+  busy: string | null
+  picker: Picker | null
+  undo: Undo | null
+  scoutId: string | null
+  percent: number
+  isHandingOff: boolean
+  suggestions: string[]
+  suggestSince: number | null
+  revealSince: number | null
+}
 
+const EMPTY: BackstageState = {
+  busy: null,
+  picker: null,
+  undo: null,
+  scoutId: null,
+  percent: 0,
+  isHandingOff: false,
+  suggestions: [],
+  suggestSince: null,
+  revealSince: null,
+}
+
+const ID = 'backstage'
 const SCOUT_AGENT = 'backstage:scout'
 const HANDOFF_FROM_PERCENT = 50
 const HANDOFF_HEADING = '# Session Handoff'
@@ -23,43 +40,168 @@ const SUGGEST_ROWS = 10
 const VERDICT = /^(CONFIRMED|REFUTED|INCONCLUSIVE)\b/
 const ALNUM = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
 const TRAIL = 7
+const FRAME_MS = 100
 const REVEAL_FRAMES = 10
+const PREFIX = 6
+const DIM = 0x6c6c6c
+const SOFT = 0xb0b0b0
+const BRIGHT = 0xffffff
 
+const noop = () => undefined
 const glyph = () => ALNUM[Math.floor(Math.random() * ALNUM.length)] ?? ' '
+const textWidthOf = (columns: number) => Math.max(10, columns - PREFIX)
+const isLoading = (state: BackstageState) => state.suggestSince !== null
+const wantsBelow = (state: BackstageState, isWorking: boolean) =>
+  !state.busy && !state.picker && !isWorking && (isLoading(state) || state.suggestions.length > 0)
+const fullRows = (suggestions: string[], columns: number) =>
+  suggestions.reduce((rows, line) => rows + Math.ceil((line.length + 1) / textWidthOf(columns)), 0)
+const stateOf = (room: { state: BackstageState | undefined }) => ({ ...EMPTY, ...room.state })
 
 function rainRow(width: number, row: number, frame: number) {
   const glyphs = Array.from({ length: width }, glyph)
   const head = ((frame + row * 9) % (width + TRAIL)) - 1
   const trailStart = Math.max(0, head - TRAIL)
-  const headAt = Math.min(head, width - 1)
-  const isHeadShown = head >= 0 && head < width
-  return {
-    before: glyphs.slice(0, trailStart).join(''),
-    trail: glyphs.slice(trailStart, Math.max(trailStart, headAt)).join(''),
-    head: isHeadShown ? (glyphs[head] ?? '') : '',
-    after: glyphs.slice(Math.max(trailStart, isHeadShown ? head + 1 : headAt + 1)).join(''),
-  }
+  return glyphs.map((ch, x) => ({ ch, fg: x === head ? BRIGHT : x >= trailStart && x < head ? SOFT : DIM }))
 }
 
-function decodeRow(text: string, width: number, row: number, step: number) {
-  const visible = text.slice(0, width)
+function decodeRow(line: string, width: number, row: number, step: number) {
+  const visible = line.slice(0, width)
   const resolved = Math.max(0, Math.floor((step / REVEAL_FRAMES) * visible.length * 1.3) - row * 3)
-  return { done: visible.slice(0, resolved), noise: Array.from({ length: Math.max(0, visible.length - resolved) }, glyph).join('') }
+  return [...visible].map((ch, x) => (x < resolved ? { ch, fg: BRIGHT } : { ch: glyph(), fg: DIM }))
 }
+
+function separator(columns: number) {
+  return '─'.repeat(Math.max(0, columns - 1))
+}
+
+const backstage: Mod<BackstageState> = {
+  id: ID,
+  layers: [
+    {
+      id: 'bar',
+      z: 50,
+      rows: 1,
+      node({ ui, state, fx, isWorking }) {
+        const { Box, Button, Text } = ui
+        const current = { ...EMPTY, ...state }
+        if (current.busy) return <Text dimColor>{current.busy}</Text>
+        const set = (patch: Partial<BackstageState>) => fx.setState<BackstageState>(s => ({ ...EMPTY, ...s, ...patch }))
+        if (current.picker) {
+          const menu =
+            current.picker === 'idea'
+              ? { title: 'Refine', items: Object.entries(IDEAS).map(([kind, idea]) => ({ key: `idea-${kind}`, label: idea.label })) }
+              : { title: 'Prompt type', items: Object.entries(PROMPT_TYPES).map(([kind, type]) => ({ key: `type-${kind}`, label: type.label })) }
+          return (
+            <Box flexWrap="wrap">
+              <Text dimColor>{menu.title}: </Text>
+              {menu.items.map((item, i) => (
+                <Button key={item.key} hotkey={String(i + 1)} label={item.label} onPress={noop} />
+              ))}
+              <Button key="cancel" hotkey="c" label="Cancel" onPress={() => set({ picker: null })} />
+            </Box>
+          )
+        }
+        const percent = current.percent
+        return (
+          <Box>
+            <Button key="rewrite" hotkey="r" label="✨✏️" onPress={noop} />
+            <Button key="ideas" hotkey="i" label="Refine…" onPress={() => set({ picker: 'idea' })} />
+            <Button key="pick" hotkey="w" label="Write prompt…" onPress={() => set({ picker: 'type' })} />
+            <Button key="verify" hotkey="v" label={current.scoutId ? 'Verifying…' : 'Verify'} onPress={noop} />
+            {current.undo && <Button key="undo" hotkey="u" label="Undo" onPress={noop} />}
+            {percent >= HANDOFF_FROM_PERCENT && !isWorking && (
+              <Button key="handoff" hotkey="p" onPress={noop}>
+                <Text color={percent > 80 ? 'red' : percent > 50 ? 'yellow' : 'green'}>Handoff → /new</Text>
+              </Button>
+            )}
+          </Box>
+        )
+      },
+    },
+    {
+      id: 'loading',
+      slot: 'suggest',
+      z: 40,
+      rows: 4,
+      animated: true,
+      visible: (state, room) => {
+        const current = stateOf(room)
+        return wantsBelow(current, room.isWorking) && isLoading(current)
+      },
+      grid({ columns, rows, now, state }) {
+        const current = { ...EMPTY, ...state }
+        const g = grid(columns, rows)
+        text(g, 0, 0, separator(columns), DIM)
+        const width = textWidthOf(columns)
+        const revealing = current.revealSince !== null
+        const frame = Math.floor((now - (revealing ? (current.revealSince ?? now) : (current.suggestSince ?? now))) / FRAME_MS)
+        const lines = revealing ? current.suggestions : [0, 1, 2].map(() => '')
+        lines.forEach((line, row) => {
+          text(g, 0, row + 1, `[ ${row + 1} ] `, DIM)
+          const cells = revealing ? decodeRow(line, width, row, frame) : rainRow(width, row, frame)
+          cells.forEach((cell, x) => put(g, PREFIX + x, row + 1, cell.ch, cell.fg))
+        })
+        return g
+      },
+    },
+    {
+      id: 'choices',
+      z: 40,
+      rows: (room: Room<BackstageState>) => {
+        const current = stateOf(room)
+        const full = 1 + fullRows(current.suggestions, room.columns)
+        return room.maxRows - 1 >= full ? full : 1 + current.suggestions.length
+      },
+      visible: (state, room) => {
+        const current = stateOf(room)
+        return wantsBelow(current, room.isWorking) && !isLoading(current)
+      },
+      node({ ui, state, columns, rows }) {
+        const { Box, Button, Text } = ui
+        const current = { ...EMPTY, ...state }
+        const isCompact = rows < 1 + fullRows(current.suggestions, columns)
+        return (
+          <Box flexDirection="column">
+            <Text dimColor>{separator(columns)}</Text>
+            {current.suggestions.map((line, i) => (
+              <Box key={`row-${i + 1}`}>
+                <Button key={`next-${i + 1}`} hotkey={String(i + 1)} label={String(i + 1)} onPress={noop} />
+                <Text wrap={isCompact ? 'truncate-end' : 'wrap'}> {line}</Text>
+              </Box>
+            ))}
+          </Box>
+        )
+      },
+    },
+  ],
+}
+
+const KIT: Kit = { plugin: ID, mods: [backstage] }
 
 let sentCount = 0
+
+async function read($: EngineInterface) {
+  return { ...EMPTY, ...(await modFx($, KIT, ID).state<BackstageState>()) }
+}
+
+async function patch($: EngineInterface, change: Partial<BackstageState> | ((state: BackstageState) => Partial<BackstageState>)) {
+  await modFx($, KIT, ID).setState<BackstageState>(s => {
+    const current = { ...EMPTY, ...s }
+    return { ...current, ...(typeof change === 'function' ? change(current) : change) }
+  })
+}
 
 function verdictOf(answer: string) {
   const lines = answer.split('\n').map(line => line.trim())
   return lines.find(line => VERDICT.test(line)) ?? lines.find(Boolean) ?? 'INCONCLUSIVE — empty report'
 }
 
-function parseClaim(text: string): Claim | null {
-  for (const line of text.split('\n')) {
+function parseClaim(found: string): Claim | null {
+  for (const line of found.split('\n')) {
     try {
-      const found: unknown = JSON.parse(line.trim())
-      if (typeof found !== 'object' || found === null) continue
-      const { claim, why, check } = found as Record<string, unknown>
+      const parsed: unknown = JSON.parse(line.trim())
+      if (typeof parsed !== 'object' || parsed === null) continue
+      const { claim, why, check } = parsed as Record<string, unknown>
       if (typeof claim === 'string' && claim.trim()) {
         return { claim, why: typeof why === 'string' ? why : '', check: typeof check === 'string' ? check : '' }
       }
@@ -69,20 +211,20 @@ function parseClaim(text: string): Claim | null {
 }
 
 async function withBusy<T>($: EngineInterface, status: string, work: () => Promise<T>) {
-  await update($, busy, () => status)
+  await patch($, { busy: status })
   try {
     return await work()
   } finally {
-    await update($, busy, () => null)
+    await patch($, { busy: null })
   }
 }
 
 async function handOff($: EngineInterface) {
-  await Promise.all([update($, isHandingOff, () => true), update($, busy, () => 'Handoff: writing summary…')])
+  await patch($, { isHandingOff: true, busy: 'Handoff: writing summary…' })
   try {
     await $.command.run({ command: 'session-handoff' })
   } catch (error) {
-    await Promise.all([update($, isHandingOff, () => false), update($, busy, () => null)])
+    await patch($, { isHandingOff: false, busy: null })
     $.ui.toast(`Handoff failed: ${String(error)}`)
   }
 }
@@ -119,13 +261,8 @@ async function nextMoves($: EngineInterface, answer: string) {
 
 async function suggestNext($: EngineInterface, answer: string) {
   const round = sentCount
-  await Promise.all([update($, suggestFrame, () => 0), update($, revealFrom, () => null)])
-  const ticker = $.clock.every(100, () => void update($, suggestFrame, frame => (frame === null ? null : frame + 1)))
-  const stop = () => {
-    ticker.cancel()
-    void update($, suggestFrame, () => null)
-    void update($, revealFrom, () => null)
-  }
+  await patch($, { suggestSince: await $.clock.now(), revealSince: null })
+  const stop = () => void patch($, { suggestSince: null, revealSince: null }).catch(() => undefined)
   const reply = await nextMoves($, answer).catch(error => {
     stop()
     throw error
@@ -137,26 +274,25 @@ async function suggestNext($: EngineInterface, answer: string) {
     .filter(Boolean)
     .slice(0, 3)
   if (next.length === 0) return stop()
-  const at = (await read($, suggestFrame)) ?? 0
-  await Promise.all([update($, suggestions, () => next), update($, revealFrom, () => at)])
-  $.clock.after(REVEAL_FRAMES * 100, stop)
+  await patch($, { suggestions: next, revealSince: await $.clock.now() })
+  $.clock.after(REVEAL_FRAMES * FRAME_MS, stop)
 }
 
 async function resumeSuggestions($: EngineInterface) {
-  if ((await read($, suggestions)).length > 0) return
+  if ((await read($)).suggestions.length > 0) return
   const last = (await $.session.messages()).findLast(row => row.text.trim())
   if (last?.role === 'assistant') await suggestNext($, last.text)
 }
 
-async function sendSuggestion($: EngineInterface, text: string) {
+async function sendSuggestion($: EngineInterface, line: string) {
   sentCount += 1
-  await update($, suggestions, () => [])
-  await $.prompt.submit({ text })
+  await patch($, { suggestions: [] })
+  await $.prompt.submit({ text: line })
 }
 
 async function askModel($: EngineInterface, system: string, draft: string, status: string) {
-  await update($, picker, () => null)
-  const [conversation, previous] = await Promise.all([conversationOf($), read($, undo)])
+  await patch($, { picker: null })
+  const [conversation, previous] = await Promise.all([conversationOf($), read($).then(state => state.undo)])
   const task = draft.trim()
     ? `Rewrite this draft:\n<<<\n${draft}\n>>>`
     : 'There is no draft: write the prompt the developer most likely needs next.'
@@ -176,30 +312,30 @@ async function askModel($: EngineInterface, system: string, draft: string, statu
     const written = reply.text.trim()
     const { isFilled } = await $.prompt.fill({ text: written, mode: 'replace' })
     if (!isFilled) return $.ui.toast('Could not fill the prompt')
-    await update($, undo, () => ({ draft: previous?.written === draft ? previous.draft : draft, written }))
+    await patch($, { undo: { draft: previous?.written === draft ? previous.draft : draft, written } })
   })
 }
 
 async function writePrompt($: EngineInterface, type: { label: string; guide: string }) {
-  const { text } = await $.prompt.read()
-  const status = `${text.trim() ? 'Rewriting' : 'Writing'} a ${type.label} prompt…`
-  await askModel($, fill(WRITER, type), text, status)
+  const { text: draft } = await $.prompt.read()
+  const status = `${draft.trim() ? 'Rewriting' : 'Writing'} a ${type.label} prompt…`
+  await askModel($, fill(WRITER, type), draft, status)
 }
 
 async function refine($: EngineInterface, direction: string, label: string) {
-  const { text } = await $.prompt.read()
-  if (!text.trim()) {
-    await update($, picker, () => null)
+  const { text: draft } = await $.prompt.read()
+  if (!draft.trim()) {
+    await patch($, { picker: null })
     return $.ui.toast('Type a draft first')
   }
-  await askModel($, fill(REFINER, { direction }), text, `${label}…`)
+  await askModel($, fill(REFINER, { direction }), draft, `${label}…`)
 }
 
 async function undoWrite($: EngineInterface) {
-  const state = await read($, undo)
+  const state = (await read($)).undo
   if (!state) return
   const { isFilled } = await $.prompt.fill({ text: state.draft, mode: 'replace' })
-  if (isFilled) await update($, undo, () => null)
+  if (isFilled) await patch($, { undo: null })
 }
 
 async function weakestClaim($: EngineInterface) {
@@ -210,10 +346,10 @@ async function weakestClaim($: EngineInterface) {
 }
 
 async function isScoutRunning($: EngineInterface) {
-  const id = await read($, scoutId)
+  const id = (await read($)).scoutId
   if (!id) return false
   const alive = (await $.agent.list()).some(agent => agent.id === id && ['pending', 'running', 'waiting'].includes(agent.status))
-  if (!alive) await update($, scoutId, () => null)
+  if (!alive) await patch($, { scoutId: null })
   return alive
 }
 
@@ -236,19 +372,26 @@ async function verify($: EngineInterface, given = '') {
     $.ui.toast(spawned.deny ?? 'Scout spawn refused')
     return null
   }
-  await update($, scoutId, () => spawned.agentId ?? null)
+  await patch($, { scoutId: spawned.agentId ?? null })
   return target.claim
+}
+
+async function act($: EngineInterface, key: string) {
+  if (key === 'rewrite') return refine($, REWRITE_DIRECTION, 'rewriting')
+  if (key === 'verify') return verify($)
+  if (key === 'undo') return undoWrite($)
+  if (key === 'handoff') return handOff($)
+  const idea = key.startsWith('idea-') ? (IDEAS as Record<string, { label: string; direction: string }>)[key.slice(5)] : undefined
+  if (idea) return refine($, idea.direction, idea.label)
+  const type = key.startsWith('type-') ? (PROMPT_TYPES as Record<string, { label: string; guide: string }>)[key.slice(5)] : undefined
+  if (type) return writePrompt($, type)
+  const line = key.startsWith('next-') ? (await read($)).suggestions[Number(key.slice(5)) - 1] : undefined
+  if (line) return sendSuggestion($, line)
 }
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
-    await Promise.all([
-      update($, busy, () => null),
-      update($, picker, () => null),
-      update($, isHandingOff, () => false),
-      update($, suggestFrame, () => null),
-      update($, revealFrom, () => null),
-    ])
+    await patch($, { busy: null, picker: null, isHandingOff: false, suggestSince: null, revealSince: null })
     $.clock.after(0, () => void resumeSuggestions($).catch(() => undefined))
     const registered = await Promise.allSettled([
       $.command.register({ name: 'refute', description: 'Have a scout verify the selected sentence (or the text given)' }),
@@ -267,15 +410,7 @@ export const register: Register = on => {
   on('agent.offer', { agent: SCOUT_AGENT }, () => ({ isOffered: false }))
 
   on('session.end', async ($, e, next) => {
-    await Promise.all([
-      update($, busy, () => null),
-      update($, picker, () => null),
-      update($, undo, () => null),
-      update($, scoutId, () => null),
-      update($, contextPercent, () => 0),
-      update($, isHandingOff, () => false),
-      update($, suggestions, () => []),
-    ])
+    await patch($, () => EMPTY)
     return next(e)
   })
 
@@ -286,22 +421,22 @@ export const register: Register = on => {
 
   on('turn.complete', async ($, e, next) => {
     if (e.agentId) {
-      if (e.agentId === (await read($, scoutId))) {
-        await update($, scoutId, () => null)
+      if (e.agentId === (await read($)).scoutId) {
+        await patch($, { scoutId: null })
         $.ui.toast(verdictOf(e.answer))
       }
       return next(e)
     }
 
-    const [{ context }, handingOff] = await Promise.all([$.session.usage(), read($, isHandingOff)])
-    await update($, contextPercent, () => context.percent ?? 0)
-    if (handingOff) {
-      await update($, isHandingOff, () => false)
+    const [{ context }, state] = await Promise.all([$.session.usage(), read($)])
+    await patch($, { percent: context.percent ?? 0 })
+    if (state.isHandingOff) {
+      await patch($, { isHandingOff: false })
       const summary = e.answer.trim()
       if (e.reason === 'answer' && summary.startsWith(HANDOFF_HEADING)) {
         $.clock.after(0, () => void carry($, summary))
       } else {
-        await update($, busy, () => null)
+        await patch($, { busy: null })
         $.ui.toast('Handoff stopped: that turn was not a handoff summary')
       }
     } else if (!e.isAborted && e.answer.trim()) {
@@ -313,135 +448,23 @@ export const register: Register = on => {
 
   on('prompt.edit', async ($, e, next) => {
     const box = await next(e)
-    if ((await read($, undo)) !== null) await update($, undo, () => null)
+    if ((await read($)).undo !== null) await patch($, { undo: null })
     return box
   })
 
   on('prompt.submit', async ($, e, next) => {
     sentCount += 1
-    if ((await read($, suggestions)).length > 0) await update($, suggestions, () => [])
-    if (e.origin.kind === 'composer' && (await read($, undo)) !== null) await update($, undo, () => null)
+    const state = await read($)
+    if (state.suggestions.length > 0) await patch($, { suggestions: [] })
+    if (e.origin.kind === 'composer' && state.undo !== null) await patch($, { undo: null })
     return next(e)
   })
 
-  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    if (e.props.hasSurvey) return next(e)
-
-    const [working, open, scouting, undoState, percent, nextPrompts, frame, revealAt] = await Promise.all([
-      read($, busy),
-      read($, picker),
-      read($, scoutId),
-      read($, undo),
-      read($, contextPercent),
-      read($, suggestions),
-      read($, suggestFrame),
-      read($, revealFrom),
-    ])
-    const { Box, Button, Text } = $.ui.resolve(e)
-
-    const menu =
-      open === 'idea'
-        ? {
-            title: 'Refine',
-            items: Object.entries(IDEAS).map(([kind, idea]) => ({
-              key: `idea-${kind}`,
-              label: idea.label,
-              run: () => refine($, idea.direction, idea.label),
-            })),
-          }
-        : open === 'type'
-          ? {
-              title: 'Prompt type',
-              items: Object.entries(PROMPT_TYPES).map(([kind, type]) => ({
-                key: `type-${kind}`,
-                label: type.label,
-                run: () => writePrompt($, type),
-              })),
-            }
-          : null
-
-    const room = e.props.maxRows - 1
-    const textWidth = Math.max(10, e.props.bodyColumns - 6)
-    const fullRows = nextPrompts.reduce((rows, text) => rows + Math.ceil((text.length + 1) / textWidth), 0)
-    const isCompact = room < 1 + fullRows
-    const wantsBelow = !working && !menu && !e.props.isWorking && (frame !== null || nextPrompts.length > 0)
-    const showsBelow = wantsBelow && room >= 1 + (frame !== null ? 3 : nextPrompts.length)
-
-    return (
-      <Box flexDirection="column" width={e.props.bodyColumns}>
-        {working && <Text dimColor>{working}</Text>}
-        {!working && menu && (
-          <Box flexWrap="wrap">
-            <Text dimColor>{menu.title}: </Text>
-            {menu.items.map((item, i) => (
-              <Button key={item.key} hotkey={String(i + 1)} label={item.label} onPress={item.run} />
-            ))}
-            <Button key="cancel" hotkey="c" label="Cancel" onPress={() => update($, picker, () => null)} />
-          </Box>
-        )}
-        {!working && !menu && (
-          <Box>
-            <Button key="rewrite" hotkey="r" label="✨✏️" onPress={() => refine($, REWRITE_DIRECTION, 'rewriting')} />
-            <Button key="ideas" hotkey="i" label="Refine…" onPress={() => update($, picker, () => 'idea')} />
-            <Button key="pick" hotkey="w" label="Write prompt…" onPress={() => update($, picker, () => 'type')} />
-            <Button key="verify" hotkey="v" label={scouting ? 'Verifying…' : 'Verify'} onPress={() => verify($)} />
-            {undoState && <Button key="undo" hotkey="u" label="Undo" onPress={() => undoWrite($)} />}
-            {percent >= HANDOFF_FROM_PERCENT && !e.props.isWorking && (
-              <Button key="handoff" hotkey="p" onPress={() => handOff($)}>
-                <Text color={percent > 80 ? 'red' : percent > 50 ? 'yellow' : 'green'}>Handoff → /new</Text>
-              </Button>
-            )}
-          </Box>
-        )}
-        {showsBelow && (
-          <Text dimColor>{'─'.repeat(Math.max(0, e.props.bodyColumns - 1))}</Text>
-        )}
-        {showsBelow && frame !== null && revealAt === null && (
-          <Box key="suggesting" flexDirection="column">
-            {[0, 1, 2].map(row => {
-              const rain = rainRow(textWidth, row, frame)
-              return (
-                <Text key={`rain-${row}`}>
-                  <Text dimColor>[ {row + 1} ] </Text>
-                  <Text dimColor>{rain.before}</Text>
-                  <Text>{rain.trail}</Text>
-                  <Text bold>{rain.head}</Text>
-                  <Text dimColor>{rain.after}</Text>
-                </Text>
-              )
-            })}
-          </Box>
-        )}
-        {showsBelow && frame !== null && revealAt !== null && (
-          <Box key="revealing" flexDirection="column">
-            {nextPrompts.map((text, row) => {
-              const decoded = decodeRow(text, textWidth, row, frame - revealAt)
-              return (
-                <Text key={`reveal-${row}`}>
-                  <Text dimColor>[ {row + 1} ] </Text>
-                  <Text>{decoded.done}</Text>
-                  <Text dimColor>{decoded.noise}</Text>
-                </Text>
-              )
-            })}
-          </Box>
-        )}
-        {showsBelow && frame === null && (
-          <Box flexDirection="column">
-            {nextPrompts.map((text, i) => (
-              <Box key={`row-${i + 1}`}>
-                <Button
-                  key={`next-${i + 1}`}
-                  hotkey={String(i + 1)}
-                  label={String(i + 1)}
-                  onPress={() => sendSuggestion($, text)}
-                />
-                <Text wrap={isCompact ? 'truncate-end' : 'wrap'}> {text}</Text>
-              </Box>
-            ))}
-          </Box>
-        )}
-      </Box>
-    )
+  on('ui.press', async ($, e, next) => {
+    const pressed = await next(e)
+    if (e.plugin === ID) await act($, e.element)
+    return pressed
   })
+
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => band($, e, await next(e), KIT)).catch(($, e, next) => next(e))
 }

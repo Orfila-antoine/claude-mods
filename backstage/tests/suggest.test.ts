@@ -1,6 +1,9 @@
 import { expect, test } from 'claude-code/testing'
 
+import { decode } from '../hooks/modkit'
 import { mountBand, press, stage, turn, typed } from './harness'
+
+const LOADING = 'modkit-backstage-suggest'
 
 const SETTLE = 1200
 const THREE = '1. Go, ship it\n- Also run the tests first\n"What about the logout?"\nA fourth one'
@@ -52,7 +55,10 @@ test('alphanumeric rain stands in for the choices, then each row decodes into it
   const band = await mountBand($)
   await $.turn.complete(turn('Done.', 't1'))
   await clock.advance(10)
-  const rain = async () => (await band.findAll({ type: 'Text' })).map(found => found.text).join('|')
+  const rain = async () => {
+    const found = await band.find({ key: LOADING })
+    return found ? decode(String(found.props.cells), Number(found.props.columns)).join('|') : ''
+  }
   const first = await rain()
   expect(first).toMatch(/\[ 1 \] /)
   expect(first).toMatch(/\[ 1 \] [A-Za-z0-9]{5}/)
@@ -80,10 +86,10 @@ test('a loading state left by a reload is cleared when the mod starts again', as
   const band = await mountBand($)
   await $.turn.complete(turn('Done.', 't1'))
   await clock.advance(10)
-  expect(await band.findAll({ type: 'Text', text: /^\[ 1 \] / })).not.toEqual([])
+  expect(await band.findAll({ key: LOADING })).not.toEqual([])
 
   await $.session.start({ cwd: '.', surface: 'terminal', isInteractive: true })
-  expect(await band.findAll({ type: 'Text', text: /^\[ 1 \] / })).toEqual([])
+  expect(await band.findAll({ key: LOADING })).toEqual([])
 })
 
 test('after a reload, the 3 prompts are written again for the last answer', async ($, on) => {
