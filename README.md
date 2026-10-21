@@ -152,6 +152,10 @@ After each turn it looks at the last three exchanges, with no model call: the sa
 /plugin install mirror@claude-mods
 ```
 
+## modkit
+
+**For mod authors: one entry point, an ordered middleware pipeline, layers above the prompt and transitions that do not flicker, copied into your own plugin.** See [`modkit/README.md`](modkit/README.md); it is not listed in the marketplace.
+
 ## License
 
 MIT
