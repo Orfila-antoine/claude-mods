@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import { bar } from '../hooks/modkit/components'
-import { DEFAULT, cell, composite, decode, encode, fade, grid, reveal, text } from '../hooks/modkit/grid'
+import { DEFAULT, cell, composite, decode, encode, fade, grid, put, reveal, text } from '../hooks/modkit/grid'
 import { alphaOf, easeInOut, easeOut, flip, isSettled, linear, tween } from '../hooks/modkit/motion'
 
 const round = (value: number) => Math.round(value * 1000) / 1000
@@ -62,4 +62,10 @@ test('cells only take width-1 characters and a bar fills by eighths', () => {
   const b = grid(4, 1)
   bar(b, 0, 0, 4, 0.5)
   expect(decode(encode(b), 4)).toEqual(['██  '])
+})
+
+test('narrow symbols survive put and wide ones become a question mark', () => {
+  const g = grid(11, 1)
+  ;['✦', '✧', '➤', '♪', '♫', '∘', '‿', '⌕', '⤳', '字', '한'].forEach((ch, x) => put(g, x, 0, ch))
+  expect(decode(encode(g), 11)[0]).toBe('✦✧➤♪♫∘‿⌕⤳??')
 })

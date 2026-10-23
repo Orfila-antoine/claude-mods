@@ -16,22 +16,26 @@ import type {
   TurnCompleteResult,
 } from 'claude-code'
 
+import type { Flow, ModkitLayout } from './contract'
 import { composite, encode, grid, resized } from './grid'
 import type { Grid } from './grid'
-import { STACK, keyOf, merge, plan } from './layers'
-import type { Placed } from './layers'
+import { assemble, harvest, keyOf, measure, placedIdOf, solve } from './layers'
+import type { BoxProps, Sized } from './layers'
 import { alphaOf, apply, flip, isSettled } from './motion'
 import type { Phase, Transition } from './motion'
+import { OWN, publish, published } from './own'
 import { run } from './pipeline'
 import type { Entry, Fault, Step } from './pipeline'
+import { roster } from './roster'
 
 export * from './components'
+export * from './contract'
 export * from './grid'
 export * from './layers'
 export * from './motion'
 export * from './pipeline'
 
-export const VERSION = '0.2.0'
+export const VERSION = '0.3.0'
 
 export type Fx = {
   plugin: string
@@ -57,7 +61,7 @@ export type ModStep<E extends KitEvent> = Step<Events[E][0], Events[E][1], Ctx>
 
 export type View<S> = { columns: number; rows: number; now: number; since: number; state: S | undefined; fx: Fx }
 export type Room<S> = { state: S | undefined; columns: number; maxRows: number; isWorking: boolean }
-type LayerBase<S> = {
+type LayerBase<S> = Flow & {
   id: string
   z: number
   rows: number | ((room: Room<S>) => number)
@@ -85,8 +89,8 @@ export type Mod<S extends JsonValue = JsonValue> = {
 export type Kit = { plugin: string; mods: readonly Mod<any>[] }
 
 type Live = { mod: Mod<any>; layer: Layer<any>; order: number; key: string }
-type Mounted = { key: string; raster: string; rows: number; members: Live[]; last: string }
-type Band = { requestId: string; columns: number; slots: Mounted[] }
+type Mounted = { raster: string; columns: number; rows: number; members: Live[]; last: string }
+type Band = { requestId: string; slots: Mounted[] }
 type Runtime = {
   session: string | null
   cache: Map<string, JsonValue | undefined>
@@ -95,9 +99,13 @@ type Runtime = {
   band: Band | null
   isStale: boolean
   ticker: { cancel: () => void } | null
+  pending: ModkitLayout | null
+  writes: number
 }
 
 const FRAME_MS = 33
+const RETRY_MS = 50
+const RETRIES = 3
 const RUNTIMES = new Map<string, Runtime>()
 const TICKERS = globalThis as { modkitTickers?: Record<string, { cancel: () => void } | undefined> }
 
@@ -108,7 +116,7 @@ const reason = (error: unknown) => (error instanceof Error ? error.message : Str
 function runtimeOf(plugin: string) {
   let runtime = RUNTIMES.get(plugin)
   if (!runtime) {
-    runtime = { session: null, cache: new Map(), phases: new Map(), faults: new Map(), band: null, isStale: false, ticker: null }
+    runtime = { session: null, cache: new Map(), phases: new Map(), faults: new Map(), band: null, isStale: false, ticker: null, pending: null, writes: 0 }
     RUNTIMES.set(plugin, runtime)
   }
   return runtime
@@ -242,7 +250,7 @@ function tick($: EngineInterface, kit: Kit, runtime: Runtime) {
     let isNeeded = false
     let hasEnded = false
     for (const slot of band.slots) {
-      const cells = encode(paint($, kit, runtime, slot.members, band.columns, slot.rows, now))
+      const cells = encode(paint($, kit, runtime, slot.members, slot.columns, slot.rows, now))
       if (cells !== slot.last) {
         const blitted = await $.ui.blit({ requestId: band.requestId, key: slot.raster, cells }).catch((error: unknown) => ({ deny: reason(error) }))
         if ('deny' in blitted && blitted.deny) {
@@ -266,7 +274,43 @@ function tick($: EngineInterface, kit: Kit, runtime: Runtime) {
 }
 
 const livesOf = (mods: readonly Mod<any>[]): Live[] =>
-  mods.flatMap((mod, order) => (mod.layers ?? []).map(layer => ({ mod, layer, order, key: `${mod.id}/${layer.id}` })))
+  mods.flatMap(mod => (mod.layers ?? []).map(layer => ({ mod, layer, key: `${mod.id}/${layer.id}` }))).map((live, order) => ({ ...live, order }))
+
+const flowOf = ({ float, width, minColumns, priority, at }: Flow): Flow => ({
+  ...(float !== undefined && { float }),
+  ...(width !== undefined && { width }),
+  ...(minColumns !== undefined && { minColumns }),
+  ...(priority !== undefined && { priority }),
+  ...(at !== undefined && { at }),
+})
+
+function same(a: unknown, b: unknown): boolean {
+  if (a === b) return true
+  if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null || Array.isArray(a) !== Array.isArray(b)) return false
+  const left = a as Record<string, unknown>
+  const right = b as Record<string, unknown>
+  return [...new Set([...Object.keys(left), ...Object.keys(right)])].every(key => same(left[key], right[key]))
+}
+
+function schedule($: EngineInterface, kit: Kit, runtime: Runtime, layout: ModkitLayout, attempt = 0) {
+  const isWaiting = runtime.pending !== null
+  runtime.pending = layout
+  if (isWaiting) return
+  $.clock.after(attempt === 0 ? 0 : RETRY_MS, () => {
+    const value = runtime.pending
+    runtime.pending = null
+    if (!value) return
+    void publish($, value)
+      .then(() => {
+        runtime.writes += 1
+        $.ui.log(`${kit.plugin}: layout written (${value.cells.length} cells, write ${runtime.writes})`, { to: 'debug' })
+      })
+      .catch((error: unknown) => {
+        $.ui.log(`${kit.plugin}: layout not written: ${reason(error)}`, { to: 'debug' })
+        if (runtime.pending === null && attempt < RETRIES) schedule($, kit, runtime, value, attempt + 1)
+      })
+  })
+}
 
 export async function band($: EngineInterface, e: RenderInput<'AbovePrompt'>, below: RenderElement, kit: Kit): Promise<RenderElement> {
   if (e.props.hasSurvey) return below
@@ -277,12 +321,14 @@ export async function band($: EngineInterface, e: RenderInput<'AbovePrompt'>, be
   const now = await $.clock.now()
   const columns = Math.max(1, Math.floor(e.props.bodyColumns))
   await load($, runtime, kit.mods)
+  const [layouts, current] = await Promise.all([roster($), published($)])
 
-  const placed: (Placed & { live: Live })[] = []
+  const shown: (Sized & { live: Live })[] = []
   for (const live of livesOf(kit.mods)) {
     const layer = live.layer
     if (isGrid(layer) && !isTerminal) continue
-    const room: Room<any> = { state: runtime.cache.get(live.mod.id), columns, maxRows: e.props.maxRows, isWorking: e.props.isWorking }
+    const roomAt = (width: number): Room<any> => ({ state: runtime.cache.get(live.mod.id), columns: width, maxRows: e.props.maxRows, isWorking: e.props.isWorking })
+    const room = roomAt(columns)
     const isVisible = guarded($, kit, runtime, live, 'visible', false, () => layer.visible?.(room.state, room) ?? true)
     const enter = isGrid(layer) ? layer.enter : undefined
     const exit = isGrid(layer) ? layer.exit : undefined
@@ -291,22 +337,40 @@ export async function band($: EngineInterface, e: RenderInput<'AbovePrompt'>, be
     runtime.phases.set(live.key, phase)
     if (!phase.visible && isSettled(phase, now, enter, exit)) continue
     const sizing = layer.rows
-    const rows = typeof sizing === 'number' ? sizing : guarded($, kit, runtime, live, 'rows', 0, () => sizing(room))
-    const slot = isGrid(layer) ? (layer.slot ?? live.key) : live.key
-    placed.push({ mod: live.mod.id, layer: layer.id, slot, order: live.order, z: layer.z, rows: Math.max(0, Math.floor(rows)), cover: isGrid(layer) && Boolean(layer.cover), live })
+    const rowsAt = (width: number) =>
+      Math.max(0, Math.floor(typeof sizing === 'number' ? sizing : guarded($, kit, runtime, live, 'rows', 0, () => sizing(roomAt(width)))))
+    const slot = isGrid(layer) ? layer.slot : undefined
+    const cell = {
+      id: `${kit.plugin}/${live.key}`,
+      z: layer.z,
+      order: live.order,
+      ...(slot !== undefined && { slot }),
+      ...(isGrid(layer) && layer.cover && { cover: true }),
+      flow: flowOf(layer),
+    }
+    shown.push({ live, cell, rowsAt })
   }
 
-  const slots = plan(placed, e.props.maxRows)
+  const others = Object.entries(layouts).flatMap(([plugin, layout]) => (plugin === OWN ? [] : [layout]))
+  const fresh = measure(columns, shown, others)
+  if (isTerminal && !same(fresh, current)) schedule($, kit, runtime, fresh)
+
+  const plan = solve(columns, e.props.maxRows, [...others, fresh])
+  const mine = new Map<string, Live[]>()
+  for (const { live, cell } of shown) mine.set(placedIdOf(cell), [...(mine.get(placedIdOf(cell)) ?? []), live])
+  const { base, found } = harvest(below, new Set(plan.map(item => item.id).filter(id => !mine.has(id))))
+  const elements = new Map<string, RenderNode>([...found].map(([id, node]) => [id, node as RenderNode]))
   const mounted: Mounted[] = []
-  const own = slots.map(slot => {
-    const members = slot.members.map(member => placed.find(one => one.mod === member.mod && one.layer === member.layer)?.live).filter((live): live is Live => Boolean(live))
-    const key = keyOf(slot.z, kit.plugin, slot.slot)
-    const first = members[0]
-    if (first && !isGrid(first.layer)) {
-      const layer = first.layer
+  for (const item of plan) {
+    const members = mine.get(item.id)
+    const first = members?.[0]
+    if (!members || !first) continue
+    const layer = first.layer
+    const key = keyOf(item.id)
+    if (!isGrid(layer)) {
       const view = {
-        columns,
-        rows: slot.rows,
+        columns: item.columns,
+        rows: item.rows,
         now,
         since: runtime.phases.get(first.key)?.since ?? now,
         state: runtime.cache.get(first.mod.id),
@@ -316,33 +380,34 @@ export async function band($: EngineInterface, e: RenderInput<'AbovePrompt'>, be
         isWorking: e.props.isWorking,
       }
       const node = guarded($, kit, runtime, first, 'node', null, () => layer.node(view))
-      return (
-        <Box key={key} height={slot.rows} overflow="hidden" flexDirection="column">
+      elements.set(
+        item.id,
+        <Box key={key} width={item.columns} height={item.rows} overflow="hidden" flexDirection="column">
           {node}
-        </Box>
+        </Box>,
       )
+      continue
     }
-    const raster = `modkit-${kit.plugin}-${slot.slot}`
-    const cells = encode(paint($, kit, runtime, members, columns, slot.rows, now))
-    mounted.push({ key, raster, rows: slot.rows, members, last: cells })
-    return (
-      <Box key={key} height={slot.rows}>
-        <Raster key={raster} columns={columns} rows={slot.rows} cells={cells} />
-      </Box>
+    const painted = [...members].sort((a, b) => a.layer.z - b.layer.z || b.order - a.order)
+    const raster = `modkit-${kit.plugin}-${layer.slot ?? first.key}`
+    const cells = encode(paint($, kit, runtime, painted, item.columns, item.rows, now))
+    mounted.push({ raster, columns: item.columns, rows: item.rows, members: painted, last: cells })
+    elements.set(
+      item.id,
+      <Box key={key} width={item.columns} height={item.rows}>
+        <Raster key={raster} columns={item.columns} rows={item.rows} cells={cells} />
+      </Box>,
     )
-  })
+  }
 
   if (isTerminal) {
-    runtime.band = { requestId: e.requestId, columns, slots: mounted }
+    runtime.band = { requestId: e.requestId, slots: mounted }
     runtime.isStale = false
     if (mounted.some(slot => isMoving(runtime, slot.members, now))) tick($, kit, runtime)
   }
-  const isCovered = slots.some(slot => slot.members.some(member => member.cover))
-  return (
-    <Box key={STACK} flexDirection="column">
-      {isCovered ? own : merge(own, below)}
-    </Box>
-  )
+  const isCovered = [...others, fresh].some(layout => layout?.cells.some(cell => cell.cover))
+  const box = (props: BoxProps, children: readonly RenderNode[]): RenderNode => <Box {...props}>{[...children]}</Box>
+  return assemble(columns, plan, elements, isCovered ? [] : (base as RenderNode[]), box) as RenderElement
 }
 
 export function defineMods(on: On, options: PluginOptions, kit: Kit) {
@@ -377,6 +442,7 @@ export function defineMods(on: On, options: PluginOptions, kit: Kit) {
         runtime.cache.clear()
         runtime.phases.clear()
         runtime.band = null
+        runtime.pending = null
         $.ui.invalidate('ui.render')
         await dispatch($, enabled, runtime, mods, 'session', { reason: 'clear' }, noop)
       }

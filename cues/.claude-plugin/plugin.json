@@ -1,6 +1,6 @@
 {
   "name": "cues",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Small cues around the prompt: a Next step from each answer in the hint line, options that state their consequence, a start-of-session line, sparks on git push",
   "author": { "name": "Antoine Orfila" },
   "license": "MIT",

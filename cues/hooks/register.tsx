@@ -24,7 +24,8 @@ const cues: Mod<CuesState> = {
   layers: [
     {
       id: 'sparks',
-      z: 30,
+      z: 90,
+      priority: 10,
       rows: ({ maxRows }) => Math.max(1, Math.min(3, maxRows)),
       animated: true,
       exit: { kind: 'fade', ms: 300 },

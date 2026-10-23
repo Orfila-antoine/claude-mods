@@ -3,16 +3,21 @@ export const BLANK = 32
 
 export type Grid = { columns: number; rows: number; cells: Uint32Array }
 
-const NARROW = [
-  [0x2010, 0x2027],
-  [0x2190, 0x21ff],
-  [0x2500, 0x25ff],
-  [0x2800, 0x28ff],
+const WIDE = [
+  [0x1100, 0x115f],
+  [0x2e80, 0xa4cf],
+  [0xac00, 0xd7a3],
+  [0xd800, 0xdfff],
+  [0xf900, 0xfaff],
+  [0xfe10, 0xfe19],
+  [0xfe30, 0xfe6f],
+  [0xff00, 0xff60],
+  [0xffe0, 0xffe6],
 ] as const
 
 export function isPrintable(code: number) {
   if (code <= 0x20 || code === 0x7f || code > 0xffff) return false
-  return code < 0x1100 || NARROW.some(([from, to]) => code >= from && code <= to)
+  return !WIDE.some(([from, to]) => code >= from && code <= to)
 }
 
 export function grid(columns: number, rows: number): Grid {

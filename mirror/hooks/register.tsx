@@ -92,7 +92,8 @@ const mirror: Mod<MirrorState> = {
   layers: [
     {
       id: 'spiral',
-      z: 20,
+      z: 80,
+      priority: 90,
       rows: ({ state }) => (state?.spiral && state.expandedAt === state.spiral.at ? 2 : 1),
       visible: state => Boolean(state?.spiral && state.spiral.at !== state.dismissedAt),
       node({ ui, state, fx }) {

@@ -87,7 +87,7 @@ test('an event no mod handles reaches the engine as it came, and an agent turn i
 })
 
 test(
-  'layers stack by z above the engine band, and a plugin beneath slots in by its own z',
+  'layers flow by z under what a plugin not on modkit draws, so the lowest stays on the prompt',
   {
     plugins: [
       {
@@ -98,10 +98,8 @@ test(
             const below = await next(e)
             const { Box, Text } = $.ui.resolve(e)
             return (
-              <Box key="modkit-stack" flexDirection="column">
-                <Box key="modkit:7:beneath:x">
-                  <Text>beneath</Text>
-                </Box>
+              <Box key="beneath" flexDirection="column">
+                <Text>beneath</Text>
                 {below}
               </Box>
             )
@@ -114,14 +112,62 @@ test(
     stage(on)
     await submit($, 'go')
     const ui = await band($)
-    expect(keysOf(await ui.drawn())).toEqual(['modkit:11:modkit:clock', 'modkit:7:beneath:x', 'modkit:5:modkit:echo/line', 'engine'])
+    const tree = await ui.drawn()
+    expect(keysOf(tree)).toEqual(['beneath', 'modkit-flow'])
+    expect(keysOf((tree as { children: unknown[] }).children[1])).toEqual(['modkit:modkit/clock', 'modkit:modkit/echo/line'])
   },
 )
+
+const PROBE = {
+  name: 'probe',
+  register(on: On) {
+    on('command.run', { command: 'probe' }, async $ => {
+      const { value } = await $.state.get({ plugin: 'modkit', key: 'layout' } as const)
+      return { text: (value?.cells ?? []).map(cell => cell.id).join(' ') }
+    })
+  },
+}
+
+test('the band publishes its layout from a timer, keeps an exiting layer in it, and stops writing once it reads it back', { plugins: [PROBE] }, async ($, on) => {
+  const { clock, seen } = stage(on)
+  const ui = await band($)
+  const writes = () => seen.logs.filter(line => line.startsWith('modkit: layout written')).length
+  const ids = async () => (await command($, 'probe')).text?.split(' ').filter(Boolean)
+  await clock.settle()
+  expect(await ids()).toEqual(['modkit/echo/line'])
+  expect(writes()).toBe(1)
+
+  await submit($, 'go')
+  await ui.drawn()
+  await clock.settle()
+  expect(await ids()).toEqual(['modkit/clock/bar', 'modkit/clock/glint', 'modkit/echo/line'])
+  await submit($, 'again')
+  await ui.drawn()
+  await clock.settle()
+  await ui.redraw()
+  await clock.settle()
+  expect(writes()).toBe(2)
+
+  await clock.advance(400)
+  await answer($)
+  await ui.drawn()
+  await clock.advance(250)
+  await ui.redraw()
+  await clock.settle()
+  expect(await ids()).toEqual(['modkit/clock/bar', 'modkit/clock/glint', 'modkit/echo/line'])
+  await clock.advance(400)
+  await ui.drawn()
+  await clock.settle()
+  expect(await ids()).toEqual(['modkit/echo/line'])
+  expect(writes()).toBe(3)
+})
 
 test('the clock fades in and out through blits, the tree drawn only when its state changes', async ($, on) => {
   const { clock, seen } = stage(on)
   const ui = await band($)
   await submit($, 'go')
+  await ui.drawn()
+  await clock.settle()
   await ui.drawn()
   const renders = seen.renders
   await clock.advance(330)

@@ -43,6 +43,7 @@ const TRAIL = 7
 const FRAME_MS = 100
 const REVEAL_FRAMES = 10
 const PREFIX = 6
+const BAR_COLUMNS = 46
 const DIM = 0x6c6c6c
 const SOFT = 0xb0b0b0
 const BRIGHT = 0xffffff
@@ -80,7 +81,9 @@ const backstage: Mod<BackstageState> = {
     {
       id: 'bar',
       z: 50,
-      rows: 1,
+      priority: 100,
+      minColumns: BAR_COLUMNS,
+      rows: ({ columns }) => (columns >= BAR_COLUMNS ? 1 : 2),
       node({ ui, state, fx, isWorking }) {
         const { Box, Button, Text } = ui
         const current = { ...EMPTY, ...state }
@@ -103,7 +106,7 @@ const backstage: Mod<BackstageState> = {
         }
         const percent = current.percent
         return (
-          <Box>
+          <Box flexWrap="wrap">
             <Button key="rewrite" hotkey="r" label="✨✏️" onPress={noop} />
             <Button key="ideas" hotkey="i" label="Refine…" onPress={() => set({ picker: 'idea' })} />
             <Button key="pick" hotkey="w" label="Write prompt…" onPress={() => set({ picker: 'type' })} />
@@ -121,7 +124,7 @@ const backstage: Mod<BackstageState> = {
     {
       id: 'loading',
       slot: 'suggest',
-      z: 40,
+      z: 60,
       rows: 4,
       animated: true,
       visible: (state, room) => {
@@ -131,22 +134,22 @@ const backstage: Mod<BackstageState> = {
       grid({ columns, rows, now, state }) {
         const current = { ...EMPTY, ...state }
         const g = grid(columns, rows)
-        text(g, 0, 0, separator(columns), DIM)
+        text(g, 0, rows - 1, separator(columns), DIM)
         const width = textWidthOf(columns)
         const revealing = current.revealSince !== null
         const frame = Math.floor((now - (revealing ? (current.revealSince ?? now) : (current.suggestSince ?? now))) / FRAME_MS)
         const lines = revealing ? current.suggestions : [0, 1, 2].map(() => '')
         lines.forEach((line, row) => {
-          text(g, 0, row + 1, `[ ${row + 1} ] `, DIM)
+          text(g, 0, row, `[ ${row + 1} ] `, DIM)
           const cells = revealing ? decodeRow(line, width, row, frame) : rainRow(width, row, frame)
-          cells.forEach((cell, x) => put(g, PREFIX + x, row + 1, cell.ch, cell.fg))
+          cells.forEach((cell, x) => put(g, PREFIX + x, row, cell.ch, cell.fg))
         })
         return g
       },
     },
     {
       id: 'choices',
-      z: 40,
+      z: 60,
       rows: (room: Room<BackstageState>) => {
         const current = stateOf(room)
         const full = 1 + fullRows(current.suggestions, room.columns)
@@ -162,13 +165,13 @@ const backstage: Mod<BackstageState> = {
         const isCompact = rows < 1 + fullRows(current.suggestions, columns)
         return (
           <Box flexDirection="column">
-            <Text dimColor>{separator(columns)}</Text>
             {current.suggestions.map((line, i) => (
               <Box key={`row-${i + 1}`}>
                 <Button key={`next-${i + 1}`} hotkey={String(i + 1)} label={String(i + 1)} onPress={noop} />
                 <Text wrap={isCompact ? 'truncate-end' : 'wrap'}> {line}</Text>
               </Box>
             ))}
+            <Text dimColor>{separator(columns)}</Text>
           </Box>
         )
       },
