@@ -338,6 +338,9 @@ export const register: Register = on => {
       read($, revealFrom),
     ])
     const { Box, Button, Text } = $.ui.resolve(e)
+    // Native buttons on remote surfaces: space them out, mark the main and the dismiss ones.
+    const isRemote = e.surface !== 'terminal'
+    const gap = isRemote ? 1 : 0
 
     const menu =
       open === 'idea'
@@ -368,23 +371,24 @@ export const register: Register = on => {
     const showsBelow = wantsBelow && room >= 1 + (frame !== null ? 3 : nextPrompts.length)
 
     return (
-      <Box flexDirection="column" width={e.props.bodyColumns}>
+      <Box flexDirection="column" width={e.props.bodyColumns} rowGap={gap}>
         {working && <Text dimColor>{working}</Text>}
         {!working && menu && (
-          <Box flexWrap="wrap">
-            <Text dimColor>{menu.title}: </Text>
+          <Box flexWrap="wrap" alignItems="center" columnGap={gap} rowGap={gap}>
+            <Text dimColor>{menu.title}{isRemote ? '' : ': '}</Text>
             {menu.items.map((item, i) => (
               <Button key={item.key} hotkey={String(i + 1)} label={item.label} onPress={item.run} />
             ))}
-            <Button key="cancel" hotkey="c" label="Cancel" onPress={() => update($, picker, () => null)} />
+            <Button key="cancel" hotkey="c" label="Cancel" role="dismiss" onPress={() => update($, picker, () => null)} />
           </Box>
         )}
         {!working && !menu && (
-          <Box>
-            <Button key="rewrite" hotkey="r" label="✨✏️" onPress={() => refine($, REWRITE_DIRECTION, 'rewriting')} />
+          <Box alignItems="center" columnGap={gap}>
+            <Button key="rewrite" hotkey="r" label={isRemote ? '✨ Rewrite' : '✨✏️'} variant={isRemote ? 'primary' : undefined} onPress={() => refine($, REWRITE_DIRECTION, 'rewriting')} />
             <Button key="ideas" hotkey="i" label="Refine…" onPress={() => update($, picker, () => 'idea')} />
             <Button key="pick" hotkey="w" label="Write prompt…" onPress={() => update($, picker, () => 'type')} />
             <Button key="verify" hotkey="v" label={scouting ? 'Verifying…' : 'Verify'} onPress={() => verify($)} />
+            <Text dimColor>[dev {e.surface}]</Text>
             {undoState && <Button key="undo" hotkey="u" label="Undo" onPress={() => undoWrite($)} />}
             {percent >= HANDOFF_FROM_PERCENT && !e.props.isWorking && (
               <Button key="handoff" hotkey="p" onPress={() => handOff($)}>
@@ -393,7 +397,7 @@ export const register: Register = on => {
             )}
           </Box>
         )}
-        {showsBelow && (
+        {showsBelow && !isRemote && (
           <Text dimColor>{'─'.repeat(Math.max(0, e.props.bodyColumns - 1))}</Text>
         )}
         {showsBelow && frame !== null && revealAt === null && (
@@ -427,9 +431,9 @@ export const register: Register = on => {
           </Box>
         )}
         {showsBelow && frame === null && (
-          <Box flexDirection="column">
+          <Box flexDirection="column" rowGap={gap}>
             {nextPrompts.map((text, i) => (
-              <Box key={`row-${i + 1}`}>
+              <Box key={`row-${i + 1}`} alignItems="center" columnGap={gap}>
                 <Button
                   key={`next-${i + 1}`}
                   hotkey={String(i + 1)}
