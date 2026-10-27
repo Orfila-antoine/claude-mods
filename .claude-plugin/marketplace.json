@@ -27,6 +27,16 @@
       "name": "mirror",
       "source": "./mirror",
       "description": "Spots a spiral (the same request, the same answer or the same failing tool, three times) and offers to break the loop"
+    },
+    {
+      "name": "eta-band",
+      "source": "./eta-band",
+      "description": "A line above the prompt with the time left in the turn and per sub-agent, learnt from your own history, plus something to do meanwhile from your open beads"
+    },
+    {
+      "name": "cache-tax",
+      "source": "./cache-tax",
+      "description": "Keeps the one-hour prompt cache warm during breaks and stops a cold send once with its rewrite cost, its row in the modkit band; adapted from cache-tax by Karan Bansal (MIT)"
     }
   ]
 }

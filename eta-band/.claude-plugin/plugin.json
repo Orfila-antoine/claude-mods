@@ -1,0 +1,8 @@
+{
+  "name": "eta-band",
+  "version": "0.3.0",
+  "description": "A line above the prompt with the time left in the turn and per sub-agent, learnt from your own history, plus something to do meanwhile from your open beads",
+  "author": { "name": "Antoine Orfila" },
+  "license": "MIT",
+  "types": "./types/index.d.ts"
+}

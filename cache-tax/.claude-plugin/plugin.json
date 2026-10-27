@@ -1,0 +1,8 @@
+{
+  "name": "cache-tax",
+  "version": "2.3.0",
+  "description": "Keeps the one-hour prompt cache warm during breaks and stops a cold send once with its estimated rewrite cost; its status line sits in the modkit band. Adapted from cache-tax by Karan Bansal (MIT).",
+  "author": { "name": "Antoine Orfila" },
+  "license": "MIT",
+  "types": "./types/index.d.ts"
+}

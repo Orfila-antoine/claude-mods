@@ -152,10 +152,43 @@ After each turn it looks at the last three exchanges, with no model call: the sa
 /plugin install mirror@claude-mods
 ```
 
+## eta-band
+
+**How long until Claude is done, per turn and per sub-agent, learnt from your own history.**
+
+While Claude works, a line above the prompt shows the time left in `hh:mm:ss`, one line per running sub-agent, and something to do meanwhile:
+
+```
+00:07:08 left · tasks 1/3
+  ● explore documents     Read index.ts            haiku 5.5  00:01:38 left
+  ! explore registration  needs your approval      haiku 5.5  00:00:10 elapsed
+  meanwhile: Review the documents filter PR
+```
+
+The countdown comes from what the turn shows: the tasks left in Claude's task list times how long a task takes you (learnt across sessions), and the sub-agents still running, each estimated from past runs of its type; parallel sub-agents end when the last one does, so the band takes the distribution of the latest finish, not the sum. The shape of the prompt alone (length, kind of request, project, model) only drives a countdown once it has proven close on your own turns: ten of them, seven in ten within a factor of two. Without either, the line reads `working` with the time elapsed, and promises nothing. The countdown is a promise: a better estimate may bring it closer, new tasks or agents may move it, nothing else pushes it later, and once it is past the line reads `longer than usual`. Time spent waiting for your answer is not counted, and turns the system starts (a background agent's notification) are neither shown nor learnt. The `meanwhile` line asks Claude Haiku for one of your open tickets from `.beads/issues.jsonl` that fits the time left, at most once per duration range every 30 minutes. History keeps the shape of each prompt, never its text.
+
+```
+/plugin install eta-band@claude-mods
+```
+
+## cache-tax
+
+**Keep the one-hour prompt cache warm during breaks, and get stopped once before a cold send with its rewrite cost.**
+
+> Adapted from [cache-tax](https://github.com/karanb192/claude-code-mods/tree/main/plugins/cache-tax) by Karan Bansal (MIT). This fork draws its status row in the modkit band and detects `/clear` without `classic.SessionStart`; see [`cache-tax/README.md`](cache-tax/README.md).
+
+```
+● cache-tax warm · keepwarm 5h10m left · ping in 50m · last ping read 200k $0.05
+```
+
+```
+/plugin install cache-tax@claude-mods
+```
+
 ## modkit
 
 **For mod authors: one entry point, an ordered middleware pipeline, layers above the prompt and transitions that do not flicker, copied into your own plugin.** See [`modkit/README.md`](modkit/README.md); it is not listed in the marketplace.
 
 ## License
 
-MIT
+MIT. `cache-tax` also carries Karan Bansal's copyright, in [`cache-tax/LICENSE`](cache-tax/LICENSE).

@@ -29,6 +29,8 @@ export type ModkitLayout = { v: 2; cells: readonly FlowCell[] }
 declare module 'claude-code' {
   interface PluginState {
     backstage: { layout: ModkitLayout }
+    'cache-tax': { layout: ModkitLayout }
+    'eta-band': { layout: ModkitLayout }
     mirror: { layout: ModkitLayout }
     modkit: { layout: ModkitLayout }
     molt: { layout: ModkitLayout }
